@@ -1,4 +1,5 @@
 import { USDA_INGREDIENTS } from "@/data/usda-ingredients";
+import recipeImageMap from "@/data/recipe-image-map.json";
 import { buildBreakfastRecipes, buildSnackRecipes, type RecipeSeedBlueprint } from "@/data/recipe-corpus-breakfast-snack";
 import { buildDinnerRecipes, buildLunchRecipes } from "@/data/recipe-corpus-lunch-dinner";
 import { getDb, closeDb } from "@/db/schema";
@@ -195,6 +196,9 @@ export function seedDatabase(reset = true): {
         mealCategory: bp.mealCategory,
       });
 
+      const resolvedImageUrl =
+        (recipeImageMap as Record<string, string>)[bp.id] ?? bp.imageUrl;
+
       insertRecipe.run(
         bp.id,
         bp.slug,
@@ -202,7 +206,7 @@ export function seedDatabase(reset = true): {
         bp.description,
         bp.mealCategory,
         bp.primarySubcategory,
-        bp.imageUrl,
+        resolvedImageUrl,
         bp.cuisine,
         bp.difficulty,
         bp.prepTimeMin,

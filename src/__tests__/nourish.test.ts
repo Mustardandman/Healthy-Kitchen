@@ -70,13 +70,25 @@ describe("Nourish Database & Category Coverage", () => {
     }
   });
 
-  it("references only existing local food images on disk", () => {
-    const page1 = searchRecipes({ page: 1, pageSize: 48 });
-    const uniqueImages = new Set(page1.items.map((r) => r.image_url));
-    for (const imgPath of uniqueImages) {
-      const fullPath = path.join(process.cwd(), "public", imgPath.replace(/^\//, ""));
-      expect(fs.existsSync(fullPath), `Missing image asset: ${fullPath}`).toBe(true);
+  it("assigns a unique dish-matched image URL to every single recipe", () => {
+    const allUrls: string[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const res = searchRecipes({ page, pageSize: 48 });
+      for (const r of res.items) allUrls.push(r.image_url);
+      if (res.items.length < 48) break;
     }
+    expect(allUrls.length).toBeGreaterThanOrEqual(750);
+    expect(new Set(allUrls).size).toBe(allUrls.length);
+    for (const url of allUrls) {
+      if (url.startsWith("http")) {
+        expect(url).toMatch(/^https?:\/\//);
+      } else {
+        const fullPath = path.join(process.cwd(), "public", url.replace(/^\//, ""));
+        expect(fs.existsSync(fullPath), `Missing image asset: ${fullPath}`).toBe(true);
+      }
+    }
+    const fallbackPath = path.join(process.cwd(), "public", "images", "food", "grain-bowl.jpg");
+    expect(fs.existsSync(fallbackPath)).toBe(true);
   });
 
   it("populates all 8 homepage featured sections", () => {
