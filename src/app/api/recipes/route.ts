@@ -4,7 +4,9 @@ import { searchRecipes } from "@/db/queries";
 import {
   getExternalProviderStatus,
   searchEdamamRecipes,
+  searchFatSecretRecipes,
   searchSpoonacularRecipes,
+  searchTheMealDbRecipes,
 } from "@/lib/providers/external-apis";
 import type { Difficulty, MealCategory, PregnancySafetyStatus, RecipeSortOption } from "@/types/recipe";
 
@@ -55,9 +57,8 @@ export async function GET(request: NextRequest) {
 
     const providers = getExternalProviderStatus();
 
-    // When external APIs are configured and the user runs a search on page 1, include live results
-    if (page === 1 && q && (providers.spoonacularConfigured || providers.edamamConfigured)) {
-      const [spoonHits, edamamHits] = await Promise.all([
+    if (page === 1 && q) {
+      const [spoonHits, edamamHits, fatsecretHits, tmdbHits] = await Promise.all([
         providers.spoonacularConfigured
           ? searchSpoonacularRecipes({
               query: q,
@@ -73,13 +74,20 @@ export async function GET(request: NextRequest) {
         providers.edamamConfigured
           ? searchEdamamRecipes({ query: q, category })
           : Promise.resolve([]),
+        providers.fatsecretConfigured
+          ? searchFatSecretRecipes({ query: q, category })
+          : Promise.resolve([]),
+        providers.themealdbEnabled
+          ? searchTheMealDbRecipes({ query: q, category })
+          : Promise.resolve([]),
       ]);
 
-      const combined = [...spoonHits, ...edamamHits, ...data.items];
+      const externalHits = [...edamamHits, ...fatsecretHits, ...spoonHits, ...tmdbHits];
+      const combined = [...externalHits, ...data.items];
       return NextResponse.json({
         ...data,
         items: combined.slice(0, 24),
-        total: data.total + spoonHits.length + edamamHits.length,
+        total: data.total + externalHits.length,
         providers,
       });
     }

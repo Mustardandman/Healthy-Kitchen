@@ -3,7 +3,9 @@ import { ensureSeeded } from "@/db/ensure-seeded";
 import { getRecipeByIdOrSlug } from "@/db/queries";
 import {
   getCachedEdamamRecipeDetail,
+  getFatSecretRecipeDetail,
   getSpoonacularRecipeDetail,
+  getTheMealDbRecipeDetail,
 } from "@/lib/providers/external-apis";
 import { RecipeDetailClient } from "@/components/RecipeDetailClient";
 
@@ -22,6 +24,10 @@ export default async function RecipeDetailPage({
     recipe = await getSpoonacularRecipeDetail(id);
   } else if (id.startsWith("edamam-")) {
     recipe = getCachedEdamamRecipeDetail(id);
+  } else if (id.startsWith("fatsecret-")) {
+    recipe = await getFatSecretRecipeDetail(id);
+  } else if (id.startsWith("themealdb-")) {
+    recipe = await getTheMealDbRecipeDetail(id);
   } else {
     recipe = getRecipeByIdOrSlug(id);
   }

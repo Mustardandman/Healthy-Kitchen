@@ -3,6 +3,7 @@ import { ensureSeeded } from "@/db/ensure-seeded";
 import { matchRecipesByFridgeIngredients } from "@/db/queries";
 import {
   findSpoonacularByIngredients,
+  findTheMealDbByIngredients,
   getExternalProviderStatus,
 } from "@/lib/providers/external-apis";
 import type { FridgeMatchMode, MealCategory } from "@/types/recipe";
@@ -28,13 +29,24 @@ export async function POST(request: NextRequest) {
     });
 
     const providers = getExternalProviderStatus();
-    if (providers.spoonacularConfigured && ingredients.length > 0) {
-      const spoonMatches = await findSpoonacularByIngredients(ingredients, 8);
-      return NextResponse.json({
-        ...localResult,
-        results: [...spoonMatches, ...localResult.results].slice(0, body.limit ?? 40),
-        providers,
-      });
+    if (ingredients.length > 0) {
+      const [spoonMatches, tmdbMatches] = await Promise.all([
+        providers.spoonacularConfigured
+          ? findSpoonacularByIngredients(ingredients, 6)
+          : Promise.resolve([]),
+        providers.themealdbEnabled
+          ? findTheMealDbByIngredients(ingredients)
+          : Promise.resolve([]),
+      ]);
+
+      const externalMatches = [...spoonMatches, ...tmdbMatches];
+      if (externalMatches.length > 0) {
+        return NextResponse.json({
+          ...localResult,
+          results: [...externalMatches, ...localResult.results].slice(0, body.limit ?? 40),
+          providers,
+        });
+      }
     }
 
     return NextResponse.json({
