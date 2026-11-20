@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: nourish-recipes
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: NOURISH_DB_PATH
+        value: /tmp/nourish.db
+      # Optional external recipe & nutrition API keys (set in Render Dashboard)
+      - key: USDA_FDC_API_KEY
+        sync: false
+      - key: EDAMAM_APP_ID
+        sync: false
+      - key: EDAMAM_APP_KEY
+        sync: false
+      - key: SPOONACULAR_API_KEY
+        sync: false
+    # Note: Render Free tier uses an ephemeral filesystem (/tmp/nourish.db auto-seeds on startup).
+    # To persist Favorites & Meal Plans across deploys/restarts, switch plan to "starter",
+    # change NOURISH_DB_PATH to /var/data/nourish.db, and uncomment the disk block below:
+    # disk:
+    #   name: nourish-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+
