@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureSeeded } from "@/db/ensure-seeded";
 import { matchRecipesByFridgeIngredients } from "@/db/queries";
 import {
+  findEdamamByIngredients,
   findSpoonacularByIngredients,
   findTheMealDbByIngredients,
   getExternalProviderStatus,
@@ -30,7 +31,14 @@ export async function POST(request: NextRequest) {
 
     const providers = getExternalProviderStatus();
     if (ingredients.length > 0) {
-      const [spoonMatches, tmdbMatches] = await Promise.all([
+      const [edamamMatches, spoonMatches, tmdbMatches] = await Promise.all([
+        providers.edamamConfigured
+          ? findEdamamByIngredients({
+              ingredients,
+              category: body.category ?? "",
+              limit: 8,
+            })
+          : Promise.resolve([]),
         providers.spoonacularConfigured
           ? findSpoonacularByIngredients(ingredients, 6)
           : Promise.resolve([]),
@@ -39,7 +47,7 @@ export async function POST(request: NextRequest) {
           : Promise.resolve([]),
       ]);
 
-      const externalMatches = [...spoonMatches, ...tmdbMatches];
+      const externalMatches = [...edamamMatches, ...spoonMatches, ...tmdbMatches];
       if (externalMatches.length > 0) {
         return NextResponse.json({
           ...localResult,

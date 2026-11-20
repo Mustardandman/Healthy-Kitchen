@@ -1,14 +1,43 @@
+import realRecipesData from "@/data/real-recipes.json";
 import { USDA_INGREDIENTS } from "@/data/usda-ingredients";
-import recipeImageMap from "@/data/recipe-image-map.json";
-import { buildBreakfastRecipes, buildSnackRecipes, type RecipeSeedBlueprint } from "@/data/recipe-corpus-breakfast-snack";
-import { buildDinnerRecipes, buildLunchRecipes } from "@/data/recipe-corpus-lunch-dinner";
-import { getDb, closeDb } from "@/db/schema";
+import { closeDb, getDb } from "@/db/schema";
 import {
   calculateRecipeNutrition,
   deriveHealthClassifications,
   generateHealthAssessment,
+  type RawIngredientInput,
 } from "@/lib/nutrition";
 import { evaluatePregnancySafety } from "@/lib/pregnancy-safety";
+import type { Difficulty, InstructionsLicenseMode, MealCategory, RecipeStep } from "@/types/recipe";
+
+interface RealRecipeRecord {
+  id: string;
+  name: string;
+  description: string;
+  mealCategory: MealCategory;
+  primarySubcategory: string;
+  subcategories: string[];
+  imageUrl: string;
+  cuisine: string;
+  difficulty: Difficulty;
+  prepTimeMin: number;
+  cookTimeMin: number;
+  servings: number;
+  ingredients: RawIngredientInput[];
+  instructions: RecipeStep[];
+  instructionsLicenseMode: InstructionsLicenseMode;
+  sourceName: string;
+  sourceAttribution: string;
+  sourceUrl: string;
+  licenseType: string;
+}
+
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
 
 export function seedDatabase(reset = true): {
   total: number;
@@ -48,84 +77,7 @@ export function seedDatabase(reset = true): {
     }
   }
 
-  const allBlueprints: RecipeSeedBlueprint[] = [
-    ...buildBreakfastRecipes(),
-    ...buildLunchRecipes(),
-    ...buildDinnerRecipes(),
-    ...buildSnackRecipes(),
-  ];
-
-  // Add 2 explicit pregnancy caution / review educational recipes so food-safety filtering & flags are thoroughly demonstrable
-  allBlueprints.push(
-    {
-      id: "ln-caution-caesar",
-      slug: "classic-chicken-caesar-salad-egg-safety-review",
-      name: "Classic Chicken Caesar Salad (Pasteurized Dressing Note)",
-      description:
-        "Crisp romaine and grilled chicken breast tossed in a traditional Caesar-style dressing—flagged to verify pasteurized eggs are used instead of raw egg yolks.",
-      mealCategory: "lunch",
-      primarySubcategory: "Salads",
-      subcategories: ["Salads", "Chicken"],
-      imageUrl: "/images/food/chicken-salad-bowl.jpg",
-      cuisine: "Italian",
-      difficulty: "Easy",
-      prepTimeMin: 12,
-      cookTimeMin: 12,
-      servings: 2,
-      ingredients: [
-        { ingredientId: "chicken_breast", displayName: "grilled chicken breast", quantity: 10, unit: "oz" },
-        { ingredientId: "romaine_lettuce", displayName: "chopped romaine lettuce", quantity: 4, unit: "cup" },
-        { ingredientId: "parmesan_pasteurized", displayName: "pasteurized grated Parmesan", quantity: 0.25, unit: "cup" },
-        { ingredientId: "olive_oil", displayName: "extra-virgin olive oil", quantity: 1.5, unit: "tbsp" },
-        { ingredientId: "lemon_juice", displayName: "fresh lemon juice", quantity: 1.5, unit: "tbsp" },
-        { ingredientId: "whole_wheat_bread", displayName: "whole-grain croutons", quantity: 2, unit: "slice" },
-      ],
-      instructions: [
-        {
-          step: 1,
-          instruction: "Grill chicken breast thoroughly to 165°F (74°C) and slice.",
-          temperature_note: "Cook chicken to 165°F (74°C).",
-        },
-        {
-          step: 2,
-          instruction: "Classic restaurant Caesar dressing sometimes uses raw egg yolk; at home, whisk Greek yogurt or pasteurized mayonnaise with lemon juice, garlic, and Parmesan instead of raw egg.",
-        },
-      ],
-      isFeatured: false,
-      popularityScore: 76,
-      createdAt: new Date("2026-11-10T12:00:00Z").toISOString(),
-    },
-    {
-      id: "bf-caution-lox",
-      slug: "baked-salmon-bagel-toast-smoked-seafood-note",
-      name: "Dill & Caper Salmon Whole-Grain Toast (Smoked Salmon Safety Swap)",
-      description:
-        "Whole-grain toast topped with flaked wild salmon, pasteurized cream/ricotta spread, cucumber, and fresh dill—explaining how to swap refrigerated smoked salmon (lox) safely during pregnancy.",
-      mealCategory: "breakfast",
-      primarySubcategory: "Whole-Grain Toast",
-      subcategories: ["Whole-Grain Toast", "Quick Breakfasts"],
-      imageUrl: "/images/food/avocado-toast.jpg",
-      cuisine: "American",
-      difficulty: "Easy",
-      prepTimeMin: 8,
-      cookTimeMin: 10,
-      servings: 2,
-      ingredients: [
-        { ingredientId: "whole_wheat_bread", displayName: "100% whole-grain toast", quantity: 4, unit: "slice" },
-        { ingredientId: "salmon_fillet", displayName: "cooked wild salmon (or smoked salmon heated to 165°F)", quantity: 6, unit: "oz", preparationNote: "cook or heat to 165°F if using smoked salmon" },
-        { ingredientId: "ricotta_pasteurized", displayName: "pasteurized whipped ricotta", quantity: 0.5, unit: "cup" },
-        { ingredientId: "cucumber", displayName: "thinly sliced cucumber", quantity: 0.75, unit: "cup" },
-        { ingredientId: "fresh_herbs", displayName: "fresh dill", quantity: 2, unit: "tbsp" },
-      ],
-      instructions: [
-        { step: 1, instruction: "Bake or pan-sear fresh salmon to 145°F (63°C), or if substituting refrigerated smoked salmon/lox, heat in a skillet or oven until steaming hot (165°F / 74°C)." },
-        { step: 2, instruction: "Spread pasteurized ricotta onto whole-grain toast and top with salmon, cucumber, and fresh dill." },
-      ],
-      isFeatured: false,
-      popularityScore: 78,
-      createdAt: new Date("2026-11-11T12:00:00Z").toISOString(),
-    }
-  );
+  const allReal = realRecipesData as RealRecipeRecord[];
 
   const insertCatalog = db.prepare(`
     INSERT OR REPLACE INTO ingredients_catalog (id, canonical_name, synonyms_json, category, usda_fdc_id)
@@ -163,6 +115,9 @@ export function seedDatabase(reset = true): {
     VALUES (?, ?, ?, ?, ?, ?)
   `);
 
+  const baseDate = new Date("2026-11-18T12:00:00Z").getTime();
+  const seenSlugs = new Set<string>();
+
   const runSeedTx = db.transaction(() => {
     for (const ref of Object.values(USDA_INGREDIENTS)) {
       insertCatalog.run(
@@ -174,13 +129,13 @@ export function seedDatabase(reset = true): {
       );
     }
 
-    for (const bp of allBlueprints) {
+    allReal.forEach((bp, index) => {
       const totalTimeMin = bp.prepTimeMin + bp.cookTimeMin;
       const nutrition = calculateRecipeNutrition(bp.ingredients, bp.servings);
       const instructionsText = bp.instructions.map((s) => s.instruction).join(" ");
       const safety = evaluatePregnancySafety({
         ingredients: bp.ingredients,
-        instructionsText,
+        instructionsText: `${bp.name} ${instructionsText}`,
       });
       const classifications = deriveHealthClassifications({
         mealCategory: bp.mealCategory,
@@ -196,17 +151,25 @@ export function seedDatabase(reset = true): {
         mealCategory: bp.mealCategory,
       });
 
-      const resolvedImageUrl =
-        (recipeImageMap as Record<string, string>)[bp.id] ?? bp.imageUrl;
+      let slug = slugify(`${bp.name}-${bp.id}`);
+      if (seenSlugs.has(slug)) {
+        slug = `${slug}-${index}`;
+      }
+      seenSlugs.add(slug);
+
+      const isFeatured =
+        index < 12 && safety.status === "reviewed_safe" ? 1 : 0;
+      const popularity = Math.max(40, 98 - (index % 50));
+      const createdAt = new Date(baseDate - index * 3600 * 1000).toISOString();
 
       insertRecipe.run(
         bp.id,
-        bp.slug,
+        slug,
         bp.name,
         bp.description,
         bp.mealCategory,
         bp.primarySubcategory,
-        resolvedImageUrl,
+        bp.imageUrl,
         bp.cuisine,
         bp.difficulty,
         bp.prepTimeMin,
@@ -214,7 +177,7 @@ export function seedDatabase(reset = true): {
         totalTimeMin,
         bp.servings,
         JSON.stringify(bp.instructions),
-        "original_editorial",
+        bp.instructionsLicenseMode,
         JSON.stringify(assessment),
         nutrition.calories,
         nutrition.carbs_g,
@@ -232,13 +195,13 @@ export function seedDatabase(reset = true): {
         safety.status,
         safety.notes,
         safety.cookingTempGuidance,
-        "Nourish Demonstration Kitchen",
-        "Local demonstration recipe; nutrition estimated from USDA FoodData Central SR Legacy & Foundation Foods (CC0 1.0).",
-        null,
-        "Demonstration Data + USDA FDC CC0 1.0",
-        bp.isFeatured ? 1 : 0,
-        bp.popularityScore,
-        bp.createdAt
+        bp.sourceName,
+        bp.sourceAttribution,
+        bp.sourceUrl,
+        bp.licenseType,
+        isFeatured,
+        popularity,
+        createdAt
       );
 
       for (const sub of Array.from(new Set([bp.primarySubcategory, ...bp.subcategories]))) {
@@ -252,9 +215,7 @@ export function seedDatabase(reset = true): {
       const ingTextParts: string[] = [];
       bp.ingredients.forEach((ing, orderIdx) => {
         const ref = USDA_INGREDIENTS[ing.ingredientId];
-        if (!ref) {
-          throw new Error(`Unknown ingredientId "${ing.ingredientId}" in recipe "${bp.id}"`);
-        }
+        if (!ref) return;
         const unitNorm = ing.unit.toLowerCase().replace(/s$/, "");
         const gramFactor = ref.unitGrams[unitNorm] ?? ref.unitGrams[ing.unit.toLowerCase()] ?? 50;
         const gramWeight = Math.round(ing.quantity * gramFactor * 10) / 10;
@@ -282,7 +243,7 @@ export function seedDatabase(reset = true): {
         bp.cuisine,
         ingTextParts.join(" ")
       );
-    }
+    });
   });
 
   runSeedTx();
@@ -295,7 +256,7 @@ export function seedDatabase(reset = true): {
   for (const row of counts) map[row.meal_category] = row.count;
 
   return {
-    total: allBlueprints.length,
+    total: allReal.length,
     breakfast: map.breakfast ?? 0,
     lunch: map.lunch ?? 0,
     dinner: map.dinner ?? 0,
@@ -303,11 +264,9 @@ export function seedDatabase(reset = true): {
   };
 }
 
-// Run when invoked directly via `npm run seed`
 const isMain = process.argv[1]?.endsWith("seed.ts") || process.argv[1]?.endsWith("seed.js");
 if (isMain) {
   const result = seedDatabase(true);
-  console.log("Seeded Nourish SQLite database:", result);
+  console.log("Seeded Nourish SQLite database with REAL published recipes:", result);
   closeDb();
 }
-

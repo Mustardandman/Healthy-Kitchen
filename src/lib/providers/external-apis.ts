@@ -84,8 +84,11 @@ export async function searchUsdaFoodDataCentral(
 }
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const THIRTY_MIN_MS = 30 * 60 * 1000;
+
 const spoonacularSearchCache = new Map<string, { expiresAt: number; data: RecipeCardItem[] }>();
 const spoonacularDetailCache = new Map<string, { expiresAt: number; data: RecipeDetail }>();
+const edamamSearchCache = new Map<string, { expiresAt: number; data: RecipeCardItem[] }>();
 const edamamDetailCache = new Map<string, { expiresAt: number; data: RecipeDetail }>();
 const fatsecretDetailCache = new Map<string, { expiresAt: number; data: RecipeDetail }>();
 
@@ -475,20 +478,166 @@ export async function getSpoonacularRecipeDetail(
    EDAMAM RECIPE SEARCH V2 ADAPTER ($0 Free Developer Plan)
    ========================================================================== */
 
+interface EdamamRawRecipe {
+  uri: string;
+  label: string;
+  image: string;
+  source: string;
+  url: string;
+  yield: number;
+  totalTime?: number;
+  calories: number;
+  cuisineType?: string[];
+  mealType?: string[];
+  ingredientLines?: string[];
+  totalNutrients?: {
+    CHOCDF?: { quantity: number };
+    PROCNT?: { quantity: number };
+    FAT?: { quantity: number };
+    FIBTG?: { quantity: number };
+    SUGAR?: { quantity: number };
+    NA?: { quantity: number };
+    CA?: { quantity: number };
+    FE?: { quantity: number };
+    FOLDFE?: { quantity: number };
+  };
+}
+
+function mapEdamamRawToDetail(
+  r: EdamamRawRecipe,
+  categoryOverride?: MealCategory | ""
+): RecipeDetail {
+  const servings = Math.max(1, r.yield || 2);
+  const recipeHash = r.uri.includes("#recipe_")
+    ? r.uri.split("#recipe_")[1]
+    : Buffer.from(r.uri).toString("base64url");
+  const slug = `edamam-${recipeHash}`;
+  const totalTime = r.totalTime && r.totalTime > 0 ? Math.round(r.totalTime) : 30;
+  const mealCat = categoryOverride || mapMealCategory(r.mealType?.[0]);
+
+  const nutrition: NutritionInfo = {
+    calories: Math.round(r.calories / servings),
+    carbs_g: Math.round(((r.totalNutrients?.CHOCDF?.quantity ?? 0) / servings) * 10) / 10,
+    protein_g: Math.round(((r.totalNutrients?.PROCNT?.quantity ?? 0) / servings) * 10) / 10,
+    fat_g: Math.round(((r.totalNutrients?.FAT?.quantity ?? 0) / servings) * 10) / 10,
+    fiber_g: Math.round(((r.totalNutrients?.FIBTG?.quantity ?? 0) / servings) * 10) / 10,
+    sugar_g: Math.round(((r.totalNutrients?.SUGAR?.quantity ?? 0) / servings) * 10) / 10,
+    added_sugar_g: null,
+    sodium_mg: Math.round((r.totalNutrients?.NA?.quantity ?? 0) / servings),
+    calcium_mg: Math.round((r.totalNutrients?.CA?.quantity ?? 0) / servings),
+    iron_mg: Math.round(((r.totalNutrients?.FE?.quantity ?? 0) / servings) * 10) / 10,
+    folate_mcg: Math.round((r.totalNutrients?.FOLDFE?.quantity ?? 0) / servings),
+    is_estimated: true,
+    source: "Powered by Edamam Recipe Search API",
+  };
+
+  const ingredients: RecipeIngredientItem[] = (r.ingredientLines ?? []).map((line, i) => ({
+    ingredient_id: `edamam-ing-${i}`,
+    canonical_name: line,
+    display_name: line,
+    quantity: 1,
+    unit: "",
+    gram_weight: 50,
+  }));
+
+  const safety = evaluatePregnancySafety({
+    ingredients: ingredients.map((i) => ({
+      ingredientId: i.canonical_name,
+      displayName: i.display_name,
+      quantity: 1,
+      unit: "",
+    })),
+    instructionsText: "",
+  });
+
+  const classifications = deriveHealthClassifications({
+    mealCategory: mealCat,
+    ingredients: [],
+    nutrition,
+    totalTimeMin: totalTime,
+    difficulty: totalTime <= 30 ? "Easy" : "Medium",
+    pregnancyStatus: safety.status,
+  });
+
+  const detail: RecipeDetail = {
+    id: slug,
+    slug,
+    name: r.label,
+    description: `Published by ${r.source} (via Edamam). View full step-by-step instructions on the original website linked below.`,
+    meal_category: mealCat,
+    primary_subcategory: r.source,
+    subcategories: [r.source],
+    image_url: r.image || "/images/food/grain-bowl.jpg",
+    cuisine: r.cuisineType?.[0] || "International",
+    difficulty: totalTime <= 30 ? "Easy" : "Medium",
+    prep_time_min: Math.round(totalTime * 0.35),
+    cook_time_min: Math.round(totalTime * 0.65),
+    total_time_min: totalTime,
+    servings,
+    nutrition,
+    classifications: classifications.length > 0 ? classifications : ["Balanced Nutrition"],
+    pregnancy_safety_status: safety.status,
+    is_featured: false,
+    popularity_score: 92,
+    created_at: new Date().toISOString(),
+    ingredients,
+    instructions: [],
+    instructions_license_mode: "link_only",
+    health_assessment: generateHealthAssessment({
+      ingredients: [],
+      nutrition,
+      mealCategory: mealCat,
+    }),
+    pregnancy_safety_notes: safety.notes,
+    cooking_temp_guidance: safety.cookingTempGuidance,
+    source_name: r.source,
+    source_attribution: `Powered by Edamam • Original recipe published by ${r.source}`,
+    source_url: r.url,
+    license_type: "Edamam Recipe Search API (link-only instructions)",
+    is_favorited: false,
+  };
+
+  edamamDetailCache.set(slug, {
+    expiresAt: Date.now() + ONE_HOUR_MS,
+    data: detail,
+  });
+
+  return detail;
+}
+
 export async function searchEdamamRecipes(params: {
   query?: string;
   category?: MealCategory | "";
+  limit?: number;
 }): Promise<RecipeCardItem[]> {
   const appId = process.env.EDAMAM_APP_ID;
   const appKey = process.env.EDAMAM_APP_KEY;
   if (!appId || !appKey) return [];
 
-  const q = params.query?.trim() || params.category || "balanced healthy";
+  const defaultQueryByCat: Record<MealCategory, string> = {
+    breakfast: "healthy protein breakfast oats eggs yogurt",
+    lunch: "healthy chicken salad quinoa bowl soup",
+    dinner: "healthy salmon chicken vegetable dinner",
+    snack: "healthy yogurt fruit nuts hummus snack",
+  };
+
+  const q =
+    params.query?.trim() ||
+    (params.category ? defaultQueryByCat[params.category] : "healthy balanced salmon chicken");
+  const limit = params.limit ?? 8;
+  const cacheKey = `${q}::${params.category || ""}::${limit}`;
+
+  const cached = edamamSearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
   const sp = new URLSearchParams({
     type: "public",
     q,
     app_id: appId,
     app_key: appKey,
+    health: "alcohol-free",
   });
   if (params.category) {
     sp.set("mealType", params.category === "snack" ? "Snack" : params.category);
@@ -500,128 +649,91 @@ export async function searchEdamamRecipes(params: {
     });
     if (!res.ok) return [];
     const json = (await res.json()) as {
-      hits?: Array<{
-        recipe: {
-          uri: string;
-          label: string;
-          image: string;
-          source: string;
-          url: string;
-          yield: number;
-          totalTime?: number;
-          calories: number;
-          cuisineType?: string[];
-          mealType?: string[];
-          ingredientLines?: string[];
-          totalNutrients?: {
-            CHOCDF?: { quantity: number };
-            PROCNT?: { quantity: number };
-            FAT?: { quantity: number };
-            FIBTG?: { quantity: number };
-            SUGAR?: { quantity: number };
-            NA?: { quantity: number };
-            CA?: { quantity: number };
-            FE?: { quantity: number };
-            FOLDFE?: { quantity: number };
-          };
-        };
-      }>;
+      hits?: Array<{ recipe: EdamamRawRecipe }>;
     };
 
-    return (json.hits ?? []).slice(0, 6).map((hit) => {
-      const r = hit.recipe;
-      const servings = Math.max(1, r.yield || 2);
-      const idHash = Buffer.from(r.uri).toString("base64url").slice(0, 24);
-      const slug = `edamam-${idHash}`;
-      const totalTime = r.totalTime && r.totalTime > 0 ? r.totalTime : 30;
-      const mealCat = params.category || mapMealCategory(r.mealType?.[0]);
-
-      const nutrition: NutritionInfo = {
-        calories: Math.round(r.calories / servings),
-        carbs_g: Math.round(((r.totalNutrients?.CHOCDF?.quantity ?? 0) / servings) * 10) / 10,
-        protein_g: Math.round(((r.totalNutrients?.PROCNT?.quantity ?? 0) / servings) * 10) / 10,
-        fat_g: Math.round(((r.totalNutrients?.FAT?.quantity ?? 0) / servings) * 10) / 10,
-        fiber_g: Math.round(((r.totalNutrients?.FIBTG?.quantity ?? 0) / servings) * 10) / 10,
-        sugar_g: Math.round(((r.totalNutrients?.SUGAR?.quantity ?? 0) / servings) * 10) / 10,
-        added_sugar_g: null,
-        sodium_mg: Math.round((r.totalNutrients?.NA?.quantity ?? 0) / servings),
-        calcium_mg: Math.round((r.totalNutrients?.CA?.quantity ?? 0) / servings),
-        iron_mg: Math.round(((r.totalNutrients?.FE?.quantity ?? 0) / servings) * 10) / 10,
-        folate_mcg: Math.round((r.totalNutrients?.FOLDFE?.quantity ?? 0) / servings),
-        is_estimated: true,
-        source: "Powered by Edamam Recipe Search API",
-      };
-
-      const ingredients: RecipeIngredientItem[] = (r.ingredientLines ?? []).map((line, i) => ({
-        ingredient_id: `edamam-ing-${i}`,
-        canonical_name: line,
-        display_name: line,
-        quantity: 1,
-        unit: "",
-        gram_weight: 50,
-      }));
-
-      const safety = evaluatePregnancySafety({
-        ingredients: ingredients.map((i) => ({
-          ingredientId: i.canonical_name,
-          displayName: i.display_name,
-          quantity: 1,
-          unit: "",
-        })),
-        instructionsText: "",
-      });
-
-      const classifications = deriveHealthClassifications({
-        mealCategory: mealCat,
-        ingredients: [],
-        nutrition,
-        totalTimeMin: totalTime,
-        difficulty: totalTime <= 30 ? "Easy" : "Medium",
-        pregnancyStatus: safety.status,
-      });
-
-      const detail: RecipeDetail = {
-        id: slug,
-        slug,
-        name: r.label,
-        description: `Indexed from ${r.source} via Edamam. View the full cooking instructions on the original website linked below.`,
-        meal_category: mealCat,
-        primary_subcategory: r.source,
-        subcategories: [r.source],
-        image_url: r.image || "/images/food/grain-bowl.jpg",
-        cuisine: r.cuisineType?.[0] || "International",
-        difficulty: totalTime <= 30 ? "Easy" : "Medium",
-        prep_time_min: Math.round(totalTime * 0.35),
-        cook_time_min: Math.round(totalTime * 0.65),
-        total_time_min: totalTime,
-        servings,
-        nutrition,
-        classifications: classifications.length > 0 ? classifications : ["Balanced Nutrition"],
-        pregnancy_safety_status: safety.status,
+    const items: RecipeCardItem[] = (json.hits ?? []).slice(0, limit).map((hit) => {
+      const detail = mapEdamamRawToDetail(hit.recipe, params.category);
+      return {
+        id: detail.id,
+        slug: detail.slug,
+        name: detail.name,
+        description: detail.description,
+        meal_category: detail.meal_category,
+        primary_subcategory: detail.primary_subcategory,
+        subcategories: detail.subcategories,
+        image_url: detail.image_url,
+        cuisine: detail.cuisine,
+        difficulty: detail.difficulty,
+        prep_time_min: detail.prep_time_min,
+        cook_time_min: detail.cook_time_min,
+        total_time_min: detail.total_time_min,
+        servings: detail.servings,
+        nutrition: detail.nutrition,
+        classifications: detail.classifications,
+        pregnancy_safety_status: detail.pregnancy_safety_status,
         is_featured: false,
-        popularity_score: 88,
-        created_at: new Date().toISOString(),
-        ingredients,
-        instructions: [],
-        instructions_license_mode: "link_only",
-        health_assessment: generateHealthAssessment({
-          ingredients: [],
-          nutrition,
-          mealCategory: mealCat,
-        }),
-        pregnancy_safety_notes: safety.notes,
-        cooking_temp_guidance: safety.cookingTempGuidance,
-        source_name: r.source,
-        source_attribution: `Powered by Edamam • Original recipe published by ${r.source}`,
-        source_url: r.url,
-        license_type: "Edamam Recipe Search API (link-only instructions)",
-        is_favorited: false,
+        popularity_score: detail.popularity_score,
+        created_at: detail.created_at,
       };
+    });
 
-      edamamDetailCache.set(slug, {
-        expiresAt: Date.now() + ONE_HOUR_MS,
-        data: detail,
-      });
+    edamamSearchCache.set(cacheKey, {
+      expiresAt: Date.now() + THIRTY_MIN_MS,
+      data: items,
+    });
+
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+export async function findEdamamByIngredients(params: {
+  ingredients: string[];
+  category?: MealCategory | "";
+  limit?: number;
+}): Promise<FridgeMatchResult[]> {
+  const appId = process.env.EDAMAM_APP_ID;
+  const appKey = process.env.EDAMAM_APP_KEY;
+  if (!appId || !appKey || params.ingredients.length === 0) return [];
+
+  const q = params.ingredients.join(" ");
+  const sp = new URLSearchParams({
+    type: "public",
+    q,
+    app_id: appId,
+    app_key: appKey,
+    health: "alcohol-free",
+  });
+  if (params.category) {
+    sp.set("mealType", params.category === "snack" ? "Snack" : params.category);
+  }
+
+  try {
+    const res = await fetch(`https://api.edamam.com/api/recipes/v2?${sp.toString()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as {
+      hits?: Array<{ recipe: EdamamRawRecipe }>;
+    };
+
+    const userTerms = params.ingredients.map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+    return (json.hits ?? []).slice(0, params.limit ?? 8).map((hit) => {
+      const detail = mapEdamamRawToDetail(hit.recipe, params.category);
+      const lines = (hit.recipe.ingredientLines ?? []).map((l) => l.toLowerCase());
+      const matched = userTerms.filter((t) => lines.some((line) => line.includes(t)));
+      const missing = (hit.recipe.ingredientLines ?? [])
+        .filter((line) => !userTerms.some((t) => line.toLowerCase().includes(t)))
+        .slice(0, 6);
+
+      const total = Math.max(1, lines.length);
+      const pct = Math.min(
+        100,
+        Math.round(((matched.length || 1) / Math.max(1, userTerms.length)) * 75 + 20)
+      );
 
       return {
         id: detail.id,
@@ -642,8 +754,13 @@ export async function searchEdamamRecipes(params: {
         classifications: detail.classifications,
         pregnancy_safety_status: detail.pregnancy_safety_status,
         is_featured: false,
-        popularity_score: 88,
+        popularity_score: detail.popularity_score,
         created_at: detail.created_at,
+        matched_ingredients: matched.length > 0 ? matched : userTerms.slice(0, 1),
+        missing_ingredients: missing,
+        matched_count: matched.length || 1,
+        total_ingredients_count: total,
+        match_percentage: pct,
       };
     });
   } catch {
@@ -651,12 +768,31 @@ export async function searchEdamamRecipes(params: {
   }
 }
 
-export function getCachedEdamamRecipeDetail(slug: string): RecipeDetail | null {
+export async function getEdamamRecipeDetail(slug: string): Promise<RecipeDetail | null> {
   const cached = edamamDetailCache.get(slug);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
-  return null;
+
+  const appId = process.env.EDAMAM_APP_ID;
+  const appKey = process.env.EDAMAM_APP_KEY;
+  if (!appId || !appKey) return null;
+
+  const recipeHash = slug.replace(/^edamam-/, "");
+  try {
+    const res = await fetch(
+      `https://api.edamam.com/api/recipes/v2/${encodeURIComponent(
+        recipeHash
+      )}?type=public&app_id=${encodeURIComponent(appId)}&app_key=${encodeURIComponent(appKey)}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as { recipe?: EdamamRawRecipe };
+    if (!json.recipe) return null;
+    return mapEdamamRawToDetail(json.recipe);
+  } catch {
+    return null;
+  }
 }
 
 /* ==========================================================================
@@ -726,6 +862,7 @@ export async function searchFatSecretRecipes(params: {
     );
     if (!res.ok) return [];
     const json = (await res.json()) as {
+      error?: { code: number; message: string };
       recipes?: {
         recipe?: Array<{
           recipe_id: string;
@@ -742,6 +879,8 @@ export async function searchFatSecretRecipes(params: {
         }>;
       };
     };
+
+    if (json.error) return [];
 
     const list = json.recipes?.recipe ?? [];
     const mealCat = params.category || "dinner";
@@ -832,18 +971,7 @@ export async function getFatSecretRecipeDetail(
         preparation_time_min?: string;
         cooking_time_min?: string;
         serving_sizes?: {
-          serving?: {
-            calories?: string;
-            carbohydrate?: string;
-            protein?: string;
-            fat?: string;
-            fiber?: string;
-            sugar?: string;
-            added_sugars?: string;
-            sodium?: string;
-            calcium?: string;
-            iron?: string;
-          };
+          serving?: Record<string, string> | Array<Record<string, string>>;
         };
         ingredients?: {
           ingredient?: Array<{
@@ -866,7 +994,8 @@ export async function getFatSecretRecipeDetail(
     const r = json.recipe;
     if (!r) return null;
 
-    const srv = r.serving_sizes?.serving;
+    const rawSrv = r.serving_sizes?.serving;
+    const srv = Array.isArray(rawSrv) ? rawSrv[0] : rawSrv;
     const nutrition: NutritionInfo = {
       calories: Math.round(Number(srv?.calories ?? 0)),
       carbs_g: Math.round(Number(srv?.carbohydrate ?? 0) * 10) / 10,
@@ -1008,12 +1137,18 @@ function parseTheMealDbIngredients(m: TheMealDbRaw): RecipeIngredientItem[] {
 export async function searchTheMealDbRecipes(params: {
   query?: string;
   category?: MealCategory | "";
+  limit?: number;
 }): Promise<RecipeCardItem[]> {
   if (process.env.THEMEALDB_ENABLED === "false") return [];
-  const q = params.query?.trim();
-  if (!q) return [];
-
+  const defaultQ: Record<MealCategory, string> = {
+    breakfast: "egg",
+    lunch: "salad",
+    dinner: "salmon",
+    snack: "yogurt",
+  };
+  const q = params.query?.trim() || (params.category ? defaultQ[params.category] : "chicken");
   const apiKey = process.env.THEMEALDB_API_KEY || "1";
+
   try {
     const res = await fetch(
       `https://www.themealdb.com/api/json/v1/${encodeURIComponent(
@@ -1023,7 +1158,7 @@ export async function searchTheMealDbRecipes(params: {
     );
     if (!res.ok) return [];
     const json = (await res.json()) as { meals?: TheMealDbRaw[] | null };
-    const meals = (json.meals ?? []).slice(0, 6);
+    const meals = (json.meals ?? []).slice(0, params.limit ?? 6);
 
     return meals.map((m) => {
       const mealCat = params.category || mapMealCategory(m.strCategory);
@@ -1246,4 +1381,22 @@ export async function getTheMealDbRecipeDetail(slug: string): Promise<RecipeDeta
   } catch {
     return null;
   }
+}
+
+export async function resolveAnyExternalRecipeDetail(
+  idOrSlug: string
+): Promise<RecipeDetail | null> {
+  if (idOrSlug.startsWith("spoonacular-")) {
+    return getSpoonacularRecipeDetail(idOrSlug);
+  }
+  if (idOrSlug.startsWith("edamam-")) {
+    return getEdamamRecipeDetail(idOrSlug);
+  }
+  if (idOrSlug.startsWith("fatsecret-")) {
+    return getFatSecretRecipeDetail(idOrSlug);
+  }
+  if (idOrSlug.startsWith("themealdb-")) {
+    return getTheMealDbRecipeDetail(idOrSlug);
+  }
+  return null;
 }

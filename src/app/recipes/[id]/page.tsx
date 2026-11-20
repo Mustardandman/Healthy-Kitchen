@@ -1,12 +1,7 @@
 import { notFound } from "next/navigation";
 import { ensureSeeded } from "@/db/ensure-seeded";
-import { getRecipeByIdOrSlug } from "@/db/queries";
-import {
-  getCachedEdamamRecipeDetail,
-  getFatSecretRecipeDetail,
-  getSpoonacularRecipeDetail,
-  getTheMealDbRecipeDetail,
-} from "@/lib/providers/external-apis";
+import { getFavoriteIds, getRecipeByIdOrSlug } from "@/db/queries";
+import { resolveAnyExternalRecipeDetail } from "@/lib/providers/external-apis";
 import { RecipeDetailClient } from "@/components/RecipeDetailClient";
 
 export const dynamic = "force-dynamic";
@@ -19,21 +14,16 @@ export default async function RecipeDetailPage({
   ensureSeeded();
   const { id } = await params;
 
-  let recipe = null;
-  if (id.startsWith("spoonacular-")) {
-    recipe = await getSpoonacularRecipeDetail(id);
-  } else if (id.startsWith("edamam-")) {
-    recipe = getCachedEdamamRecipeDetail(id);
-  } else if (id.startsWith("fatsecret-")) {
-    recipe = await getFatSecretRecipeDetail(id);
-  } else if (id.startsWith("themealdb-")) {
-    recipe = await getTheMealDbRecipeDetail(id);
-  } else {
-    recipe = getRecipeByIdOrSlug(id);
-  }
+  const local = getRecipeByIdOrSlug(id);
+  const recipe = local ?? (await resolveAnyExternalRecipeDetail(id));
 
   if (!recipe) {
     notFound();
+  }
+
+  const favIds = getFavoriteIds();
+  if (favIds.includes(recipe.id)) {
+    recipe.is_favorited = true;
   }
 
   return <RecipeDetailClient recipe={recipe} />;

@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureSeeded } from "@/db/ensure-seeded";
-import { getFavoriteIds, getFavorites, toggleFavorite } from "@/db/queries";
+import {
+  getFavoriteIds,
+  getFavorites,
+  getRecipeByIdOrSlug,
+  toggleFavorite,
+  upsertExternalRecipeRecord,
+} from "@/db/queries";
+import { resolveAnyExternalRecipeDetail } from "@/lib/providers/external-apis";
 
 export async function GET() {
   try {
@@ -17,10 +24,20 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    ensureSeeded();
     const body = (await request.json()) as { recipeId?: string };
     if (!body.recipeId) {
       return NextResponse.json({ error: "recipeId is required" }, { status: 400 });
     }
+
+    const existing = getRecipeByIdOrSlug(body.recipeId);
+    if (!existing) {
+      const external = await resolveAnyExternalRecipeDetail(body.recipeId);
+      if (external) {
+        upsertExternalRecipeRecord(external);
+      }
+    }
+
     const res = toggleFavorite(body.recipeId);
     return NextResponse.json(res);
   } catch (error) {
@@ -28,4 +45,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to update favorite" }, { status: 500 });
   }
 }
-

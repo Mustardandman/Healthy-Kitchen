@@ -2,56 +2,95 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { ensureSeeded } from "@/db/ensure-seeded";
 import { getFavoriteIds, getHomepageSections } from "@/db/queries";
+import {
+  getExternalProviderStatus,
+  searchEdamamRecipes,
+  searchTheMealDbRecipes,
+} from "@/lib/providers/external-apis";
 import { SearchBar } from "@/components/SearchBar";
 import { RecipeGridClient } from "@/components/RecipeGridClient";
 
 export const dynamic = "force-dynamic";
 
-export default function HomePage() {
+export default async function HomePage() {
   ensureSeeded();
   const sections = getHomepageSections();
   const favoriteIds = getFavoriteIds();
+  const providers = getExternalProviderStatus();
+
+  // Fetch cached live recipes across the 4 meal pillars when Edamam/TheMealDB are active
+  const [liveBf, liveLn, liveDn, liveSn, liveTmdb] = await Promise.all([
+    providers.edamamConfigured
+      ? searchEdamamRecipes({ category: "breakfast", limit: 4 })
+      : Promise.resolve([]),
+    providers.edamamConfigured
+      ? searchEdamamRecipes({ category: "lunch", limit: 4 })
+      : Promise.resolve([]),
+    providers.edamamConfigured
+      ? searchEdamamRecipes({ category: "dinner", limit: 4 })
+      : Promise.resolve([]),
+    providers.edamamConfigured
+      ? searchEdamamRecipes({ category: "snack", limit: 4 })
+      : Promise.resolve([]),
+    providers.themealdbEnabled
+      ? searchTheMealDbRecipes({ query: "salmon", limit: 4 })
+      : Promise.resolve([]),
+  ]);
+
+  const pick4 = <T,>(live: T[], fallback: T[]) =>
+    [...live, ...fallback].slice(0, 4);
 
   const sectionList = [
     {
       title: "Featured Recipes",
       href: "/recipes",
-      items: sections.featured.slice(0, 4),
+      items: pick4([...liveDn.slice(0, 2), ...liveLn.slice(0, 2)], sections.featured),
     },
     {
       title: "Popular Breakfast Recipes",
       href: "/breakfast",
-      items: sections.popularBreakfast.slice(0, 4),
+      items: pick4(liveBf, sections.popularBreakfast),
     },
     {
       title: "Quick and Easy Lunches",
       href: "/lunch?maxTime=20",
-      items: sections.quickLunches.slice(0, 4),
+      items: pick4(liveLn, sections.quickLunches),
     },
     {
       title: "Healthy Dinner Ideas",
       href: "/dinner",
-      items: sections.healthyDinners.slice(0, 4),
+      items: pick4(liveDn, sections.healthyDinners),
     },
     {
       title: "Pregnancy-Friendly Recipes",
       href: "/recipes?safetyStatus=reviewed_safe",
-      items: sections.pregnancyFriendly.slice(0, 4),
+      items: pick4(
+        [...liveBf, ...liveLn, ...liveDn].filter(
+          (r) => r.pregnancy_safety_status === "reviewed_safe"
+        ),
+        sections.pregnancyFriendly
+      ),
     },
     {
       title: "High-Protein Meals",
       href: "/recipes?minProtein=24&sort=protein_desc",
-      items: sections.highProtein.slice(0, 4),
+      items: pick4(
+        [...liveDn, ...liveLn].filter((r) => r.nutrition.protein_g >= 20),
+        sections.highProtein
+      ),
     },
     {
       title: "Recipes Ready in 30 Minutes",
       href: "/recipes?maxTime=30",
-      items: sections.readyIn30.slice(0, 4),
+      items: pick4(
+        [...liveLn, ...liveSn].filter((r) => r.total_time_min <= 30),
+        sections.readyIn30
+      ),
     },
     {
       title: "Recently Added Recipes",
       href: "/recipes?sort=recent",
-      items: sections.recentlyAdded.slice(0, 4),
+      items: pick4(liveTmdb, sections.recentlyAdded),
     },
   ];
 

@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
     const dietaryRaw = searchParams.get("dietary");
     const q = searchParams.get("q") ?? undefined;
     const category = (searchParams.get("category") as MealCategory | "") ?? undefined;
+    const subcategory = searchParams.get("subcategory") ?? undefined;
     const maxTime = searchParams.get("maxTime") ? Number(searchParams.get("maxTime")) : undefined;
     const minProtein = searchParams.get("minProtein") ? Number(searchParams.get("minProtein")) : undefined;
     const maxCarbs = searchParams.get("maxCarbs") ? Number(searchParams.get("maxCarbs")) : undefined;
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
     const data = searchRecipes({
       q,
       category,
-      subcategory: searchParams.get("subcategory") ?? undefined,
+      subcategory,
       ingredients: ingredientsRaw
         ? ingredientsRaw
             .split(",")
@@ -57,11 +58,18 @@ export async function GET(request: NextRequest) {
 
     const providers = getExternalProviderStatus();
 
-    if (page === 1 && q) {
-      const [spoonHits, edamamHits, fatsecretHits, tmdbHits] = await Promise.all([
-        providers.spoonacularConfigured
+    if (page === 1) {
+      const effectiveQuery = q || subcategory || "";
+      const [edamamHits, fatsecretHits, spoonHits, tmdbHits] = await Promise.all([
+        providers.edamamConfigured
+          ? searchEdamamRecipes({ query: effectiveQuery, category, limit: 8 })
+          : Promise.resolve([]),
+        providers.fatsecretConfigured && effectiveQuery
+          ? searchFatSecretRecipes({ query: effectiveQuery, category })
+          : Promise.resolve([]),
+        providers.spoonacularConfigured && effectiveQuery
           ? searchSpoonacularRecipes({
-              query: q,
+              query: effectiveQuery,
               category,
               maxTime,
               minProtein,
@@ -71,19 +79,16 @@ export async function GET(request: NextRequest) {
               number: 6,
             })
           : Promise.resolve([]),
-        providers.edamamConfigured
-          ? searchEdamamRecipes({ query: q, category })
-          : Promise.resolve([]),
-        providers.fatsecretConfigured
-          ? searchFatSecretRecipes({ query: q, category })
-          : Promise.resolve([]),
-        providers.themealdbEnabled
-          ? searchTheMealDbRecipes({ query: q, category })
+        providers.themealdbEnabled && effectiveQuery
+          ? searchTheMealDbRecipes({ query: effectiveQuery, category, limit: 4 })
           : Promise.resolve([]),
       ]);
 
       const externalHits = [...edamamHits, ...fatsecretHits, ...spoonHits, ...tmdbHits];
-      const combined = [...externalHits, ...data.items];
+      const seen = new Set(externalHits.map((r) => r.id));
+      const dedupedLocal = data.items.filter((r) => !seen.has(r.id));
+      const combined = [...externalHits, ...dedupedLocal];
+
       return NextResponse.json({
         ...data,
         items: combined.slice(0, 24),

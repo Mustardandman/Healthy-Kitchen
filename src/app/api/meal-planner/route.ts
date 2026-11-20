@@ -5,9 +5,12 @@ import {
   clearMealPlan,
   getConsolidatedShoppingList,
   getMealPlanEntries,
+  getRecipeByIdOrSlug,
   removeMealPlanEntry,
   setShoppingListCheck,
+  upsertExternalRecipeRecord,
 } from "@/db/queries";
+import { resolveAnyExternalRecipeDetail } from "@/lib/providers/external-apis";
 import type { DayOfWeek, MealCategory } from "@/types/recipe";
 
 export async function GET() {
@@ -25,6 +28,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    ensureSeeded();
     const body = (await request.json()) as {
       dayOfWeek?: DayOfWeek;
       mealSlot?: MealCategory;
@@ -37,6 +41,14 @@ export async function POST(request: NextRequest) {
         { error: "dayOfWeek, mealSlot, and recipeId are required" },
         { status: 400 }
       );
+    }
+
+    const existing = getRecipeByIdOrSlug(body.recipeId);
+    if (!existing) {
+      const external = await resolveAnyExternalRecipeDetail(body.recipeId);
+      if (external) {
+        upsertExternalRecipeRecord(external);
+      }
     }
 
     const created = addMealPlanEntry({
@@ -59,6 +71,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    ensureSeeded();
     const body = (await request.json()) as { itemKey?: string; checked?: boolean };
     if (!body.itemKey || typeof body.checked !== "boolean") {
       return NextResponse.json({ error: "itemKey and checked are required" }, { status: 400 });
@@ -73,6 +86,7 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    ensureSeeded();
     const { searchParams } = new URL(request.url);
     const idParam = searchParams.get("id");
     const clearAll = searchParams.get("clearAll") === "true";
@@ -94,4 +108,3 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Failed to update meal plan" }, { status: 500 });
   }
 }
-

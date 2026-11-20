@@ -5,6 +5,11 @@ import {
   getSubcategoryCounts,
   searchRecipes,
 } from "@/db/queries";
+import {
+  getExternalProviderStatus,
+  searchEdamamRecipes,
+  searchTheMealDbRecipes,
+} from "@/lib/providers/external-apis";
 import { CategoryBrowseClient } from "@/components/CategoryBrowseClient";
 import type { MealCategory } from "@/types/recipe";
 
@@ -16,7 +21,7 @@ interface CategoryPageShellProps {
   showDistinctSubcategoryGrid?: boolean;
 }
 
-export function CategoryPageShell({
+export async function CategoryPageShell({
   category,
   title,
   subtitle,
@@ -30,6 +35,18 @@ export function CategoryPageShell({
     page: 1,
     pageSize: 24,
   });
+
+  const providers = getExternalProviderStatus();
+  const [edamamLive, tmdbLive] = await Promise.all([
+    providers.edamamConfigured
+      ? searchEdamamRecipes({ category, limit: 8 })
+      : Promise.resolve([]),
+    providers.themealdbEnabled
+      ? searchTheMealDbRecipes({ category, limit: 4 })
+      : Promise.resolve([]),
+  ]);
+
+  const combinedInitial = [...edamamLive, ...tmdbLive, ...initialData.items].slice(0, 24);
   const subcategoryCounts = getSubcategoryCounts(category);
   const cuisines = getAvailableCuisines();
   const favoriteIds = getFavoriteIds();
@@ -51,8 +68,8 @@ export function CategoryPageShell({
         <CategoryBrowseClient
           fixedCategory={category}
           initialMaxTime={initialMaxTime}
-          initialItems={initialData.items}
-          initialTotal={initialData.total}
+          initialItems={combinedInitial}
+          initialTotal={initialData.total + edamamLive.length + tmdbLive.length}
           initialTotalPages={initialData.totalPages}
           initialFavoriteIds={favoriteIds}
           subcategoryCounts={subcategoryCounts}

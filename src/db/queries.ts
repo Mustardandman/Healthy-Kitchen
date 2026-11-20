@@ -713,6 +713,102 @@ export function toggleFavorite(recipeId: string): { isFavorited: boolean } {
   return { isFavorited: true };
 }
 
+export function upsertExternalRecipeRecord(recipe: RecipeDetail): void {
+  const db = getDb();
+  const exists = db.prepare(`SELECT id FROM recipes WHERE id = ?`).get(recipe.id);
+  if (exists) return;
+
+  const insertRecipe = db.prepare(`
+    INSERT INTO recipes (
+      id, slug, name, description, meal_category, primary_subcategory, image_url, cuisine, difficulty,
+      prep_time_min, cook_time_min, total_time_min, servings, instructions_json, instructions_license_mode,
+      health_assessment_json, nutrition_calories, nutrition_carbs_g, nutrition_protein_g, nutrition_fat_g,
+      nutrition_fiber_g, nutrition_sugar_g, nutrition_added_sugar_g, nutrition_sodium_mg,
+      nutrition_calcium_mg, nutrition_iron_mg, nutrition_folate_mcg, nutrition_is_estimated, nutrition_source,
+      pregnancy_safety_status, pregnancy_safety_notes, cooking_temp_guidance,
+      source_name, source_attribution, source_url, license_type, is_featured, popularity_score, created_at
+    ) VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?
+    )
+  `);
+
+  const insertIngCatalog = db.prepare(`
+    INSERT OR IGNORE INTO ingredients_catalog (id, canonical_name, synonyms_json, category, usda_fdc_id)
+    VALUES (?, ?, '[]', 'pantry', NULL)
+  `);
+
+  const insertRecipeIng = db.prepare(`
+    INSERT INTO recipe_ingredients (recipe_id, ingredient_id, display_name, quantity, unit, gram_weight, preparation_note, is_optional, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?)
+  `);
+
+  const tx = db.transaction(() => {
+    insertRecipe.run(
+      recipe.id,
+      recipe.slug,
+      recipe.name,
+      recipe.description,
+      recipe.meal_category,
+      recipe.primary_subcategory,
+      recipe.image_url,
+      recipe.cuisine,
+      recipe.difficulty,
+      recipe.prep_time_min,
+      recipe.cook_time_min,
+      recipe.total_time_min,
+      recipe.servings,
+      JSON.stringify(recipe.instructions),
+      recipe.instructions_license_mode,
+      JSON.stringify(recipe.health_assessment),
+      recipe.nutrition.calories,
+      recipe.nutrition.carbs_g,
+      recipe.nutrition.protein_g,
+      recipe.nutrition.fat_g,
+      recipe.nutrition.fiber_g,
+      recipe.nutrition.sugar_g,
+      recipe.nutrition.added_sugar_g,
+      recipe.nutrition.sodium_mg,
+      recipe.nutrition.calcium_mg,
+      recipe.nutrition.iron_mg,
+      recipe.nutrition.folate_mcg,
+      recipe.nutrition.is_estimated ? 1 : 0,
+      recipe.nutrition.source,
+      recipe.pregnancy_safety_status,
+      recipe.pregnancy_safety_notes,
+      recipe.cooking_temp_guidance,
+      recipe.source_name,
+      recipe.source_attribution,
+      recipe.source_url,
+      recipe.license_type,
+      0,
+      recipe.popularity_score,
+      recipe.created_at
+    );
+
+    recipe.ingredients.forEach((ing, idx) => {
+      const catId = `ext-${ing.canonical_name.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 48)}`;
+      insertIngCatalog.run(catId, ing.canonical_name.slice(0, 120));
+      insertRecipeIng.run(
+        recipe.id,
+        catId,
+        ing.display_name,
+        ing.quantity || 1,
+        ing.unit || "",
+        ing.gram_weight || 50,
+        idx
+      );
+    });
+  });
+
+  tx();
+}
+
 export function getMealPlanEntries(): MealPlanEntry[] {
   const db = getDb();
   const rows = db
