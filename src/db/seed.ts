@@ -232,10 +232,10 @@ export function seedDatabase(reset = true): {
         safety.status,
         safety.notes,
         safety.cookingTempGuidance,
-        "Nourish Editorial Kitchen",
-        "Original Nourish recipe; nutrition estimated from USDA FoodData Central SR Legacy & Foundation Foods (CC0 1.0).",
+        "Nourish Demonstration Kitchen",
+        "Local demonstration recipe; nutrition estimated from USDA FoodData Central SR Legacy & Foundation Foods (CC0 1.0).",
         null,
-        "Nourish Editorial Original + USDA FDC CC0 1.0",
+        "Demonstration Data + USDA FDC CC0 1.0",
         bp.isFeatured ? 1 : 0,
         bp.popularityScore,
         bp.createdAt

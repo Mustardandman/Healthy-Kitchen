@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { DAYS_OF_WEEK } from "@/lib/categories";
 import { formatMinutes, formatQuantity, formatSafetyLabel } from "@/lib/format";
+import { TRUSTED_HEALTH_AND_RECIPE_REFERENCES } from "@/lib/references";
 import type { DayOfWeek, MealCategory, RecipeDetail } from "@/types/recipe";
 
 interface RecipeDetailClientProps {
@@ -411,12 +412,65 @@ export function RecipeDetailClient({ recipe }: RecipeDetailClientProps) {
 
             <div className="border-t border-[#F0F2F0] pt-3 text-[11px] leading-relaxed text-[#777F78]">
               <p>
-                {recipe.source_attribution} • Individual glycemic responses vary; follow guidance from your OB/GYN, diabetes specialist, or registered dietitian.
+                Individual glycemic responses vary; follow guidance from your OB/GYN, diabetes specialist, or registered dietitian.
               </p>
             </div>
           </section>
         </div>
       </div>
+
+      {/* Original Recipe Site Reference & Trusted Health Sources at the Very Bottom */}
+      <section
+        aria-label="Recipe source and trusted references"
+        className="mt-12 rounded-2xl border border-[#E4E7E4] bg-[#F7F8F7] p-6 space-y-4"
+      >
+        <div className="space-y-1">
+          <h2 className="text-sm font-semibold text-[#292D2A]">
+            Recipe Source &amp; References
+          </h2>
+          <p className="text-xs leading-relaxed text-[#575E58]">
+            {recipe.source_attribution}
+          </p>
+          {recipe.source_url ? (
+            <p className="pt-1">
+              <a
+                href={recipe.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#557059] underline hover:text-[#292D2A]"
+              >
+                <span>Original Recipe Source: {recipe.source_name}</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            </p>
+          ) : (
+            <p className="text-[11px] text-[#777F78]">
+              Origin: Nourish local demonstration recipe database (connect Spoonacular or Edamam API keys in environment settings to pull third-party recipes with direct publisher links).
+            </p>
+          )}
+        </div>
+
+        <div className="border-t border-[#E4E7E4] pt-4">
+          <p className="mb-2 text-xs font-medium text-[#292D2A]">
+            Reputable Recipe, Nutrition &amp; Pregnancy Guidance Resources:
+          </p>
+          <ul className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
+            {TRUSTED_HEALTH_AND_RECIPE_REFERENCES.map((ref) => (
+              <li key={ref.url}>
+                <a
+                  href={ref.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[#557059] underline hover:text-[#292D2A]"
+                >
+                  <span>{ref.name}</span>
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
     </div>
   );
 }
