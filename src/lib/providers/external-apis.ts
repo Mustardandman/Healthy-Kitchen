@@ -5,6 +5,7 @@
 
 import { deriveHealthClassifications, generateHealthAssessment } from "@/lib/nutrition";
 import { evaluatePregnancySafety } from "@/lib/pregnancy-safety";
+import { extractRecipeInstructionsFromUrl } from "@/lib/recipe-scraper";
 import type {
   FridgeMatchResult,
   MealCategory,
@@ -817,29 +818,61 @@ export async function findEdamamByIngredients(params: {
 
 export async function getEdamamRecipeDetail(slug: string): Promise<RecipeDetail | null> {
   const cached = edamamDetailCache.get(slug);
+  let detail: RecipeDetail | null = null;
+
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
+    detail = cached.data;
+  } else {
+    const appId = process.env.EDAMAM_APP_ID;
+    const appKey = process.env.EDAMAM_APP_KEY;
+    if (!appId || !appKey) return null;
+
+    const recipeHash = slug.replace(/^edamam-/, "");
+    try {
+      const res = await fetch(
+        `https://api.edamam.com/api/recipes/v2/${encodeURIComponent(
+          recipeHash
+        )}?type=public&app_id=${encodeURIComponent(appId)}&app_key=${encodeURIComponent(appKey)}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) return null;
+      const json = (await res.json()) as { recipe?: EdamamRawRecipe };
+      if (!json.recipe) return null;
+      detail = mapEdamamRawToDetail(json.recipe);
+    } catch {
+      return null;
+    }
   }
 
-  const appId = process.env.EDAMAM_APP_ID;
-  const appKey = process.env.EDAMAM_APP_KEY;
-  if (!appId || !appKey) return null;
-
-  const recipeHash = slug.replace(/^edamam-/, "");
-  try {
-    const res = await fetch(
-      `https://api.edamam.com/api/recipes/v2/${encodeURIComponent(
-        recipeHash
-      )}?type=public&app_id=${encodeURIComponent(appId)}&app_key=${encodeURIComponent(appKey)}`,
-      { cache: "no-store" }
-    );
-    if (!res.ok) return null;
-    const json = (await res.json()) as { recipe?: EdamamRawRecipe };
-    if (!json.recipe) return null;
-    return mapEdamamRawToDetail(json.recipe);
-  } catch {
-    return null;
+  if (detail && detail.instructions.length === 0 && detail.source_url) {
+    const extracted = await extractRecipeInstructionsFromUrl(detail.source_url);
+    if (extracted.length > 0) {
+      const safety = evaluatePregnancySafety({
+        ingredients: detail.ingredients.map((i) => ({
+          ingredientId: i.canonical_name,
+          displayName: i.display_name,
+          quantity: i.quantity,
+          unit: i.unit,
+        })),
+        instructionsText: extracted.map((s) => s.instruction).join(" "),
+      });
+      detail = {
+        ...detail,
+        instructions: extracted,
+        instructions_license_mode: "licensed_display",
+        pregnancy_safety_status: safety.status,
+        pregnancy_safety_notes: safety.notes,
+        cooking_temp_guidance: safety.cookingTempGuidance,
+        description: `Published by ${detail.source_name} (via Edamam). Step-by-step instructions and reference link below.`,
+      };
+      edamamDetailCache.set(slug, {
+        expiresAt: Date.now() + ONE_HOUR_MS,
+        data: detail,
+      });
+    }
   }
+
+  return detail;
 }
 
 /* ==========================================================================

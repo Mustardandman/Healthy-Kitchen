@@ -27,6 +27,7 @@ import {
 } from "@/lib/categories";
 import { calculateRecipeNutrition } from "@/lib/nutrition";
 import { evaluatePregnancySafety } from "@/lib/pregnancy-safety";
+import { parseInstructionsFromHtml } from "@/lib/recipe-scraper";
 
 const TEST_DB = path.join(process.cwd(), "data", "nourish.test.db");
 
@@ -224,5 +225,32 @@ describe("Favorites, Meal Planner & Consolidated Shopping List", () => {
     setShoppingListCheck(firstKey, true);
     const updatedShopping = getConsolidatedShoppingList();
     expect(updatedShopping.find((i) => i.item_key === firstKey)?.checked).toBe(true);
+  });
+
+  it("extracts step-by-step instructions from Schema.org JSON-LD publisher pages", () => {
+    const sampleHtml = `
+      <html><head>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@graph": [
+              {
+                "@type": "Recipe",
+                "name": "Chili Maple Salmon and Broccoli Bowls",
+                "recipeInstructions": [
+                  { "@type": "HowToStep", "text": "Preheat oven to 425 degrees." },
+                  { "@type": "HowToStep", "text": "Mix together sauce and marinate salmon." },
+                  { "@type": "HowToStep", "text": "Bake for 15 minutes until cooked through." }
+                ]
+              }
+            ]
+          }
+        </script>
+      </head></html>
+    `;
+    const steps = parseInstructionsFromHtml(sampleHtml);
+    expect(steps.length).toBe(3);
+    expect(steps[0]).toEqual({ step: 1, instruction: "Preheat oven to 425 degrees." });
+    expect(steps[2].step).toBe(3);
   });
 });

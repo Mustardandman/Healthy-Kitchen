@@ -8,6 +8,8 @@ import {
   ArrowLeft,
   CalendarPlus,
   Check,
+  ChevronDown,
+  ChevronUp,
   Clock,
   ExternalLink,
   Heart,
@@ -33,6 +35,7 @@ export function RecipeDetailClient({ recipe }: RecipeDetailClientProps) {
   const [imgSrc, setImgSrc] = useState(recipe.image_url);
   const [servings, setServings] = useState(recipe.servings);
   const [checkedIngredients, setCheckedIngredients] = useState<Set<number>>(new Set());
+  const [instructionsExpanded, setInstructionsExpanded] = useState(false);
   const [isFavorited, setIsFavorited] = useState(Boolean(recipe.is_favorited));
   const [plannerDay, setPlannerDay] = useState<DayOfWeek>("monday");
   const [plannerSlot, setPlannerSlot] = useState<MealCategory>(recipe.meal_category);
@@ -338,44 +341,99 @@ export function RecipeDetailClient({ recipe }: RecipeDetailClientProps) {
         {/* Right: Instructions, Pregnancy Safety & Assessment */}
         <div className="space-y-8 lg:col-span-7">
           <section className="rounded-2xl border border-[#E4E7E4] bg-white p-6">
-            <h2 className="text-lg font-bold text-[#292D2A]">Instructions</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-lg font-bold text-[#292D2A]">Instructions</h2>
+              {recipe.instructions.length > 0 && (
+                <span className="text-xs font-medium text-[#777F78]">
+                  {recipe.instructions.length}{" "}
+                  {recipe.instructions.length === 1 ? "step" : "steps"}
+                </span>
+              )}
+            </div>
 
-            {recipe.instructions_license_mode === "link_only" && recipe.source_url ? (
-              <div className="mt-4 rounded-xl bg-[#F7F8F7] p-5">
-                <p className="text-sm text-[#292D2A]">
-                  Preparation steps are hosted by <strong>{recipe.source_name}</strong>.
-                </p>
+            {recipe.source_url && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#E4E7E4] bg-[#F7F8F7] px-3.5 py-2.5 text-xs">
+                <span className="text-[#575E58]">
+                  Recipe reference:{" "}
+                  <strong className="font-semibold text-[#292D2A]">
+                    {recipe.source_name}
+                  </strong>
+                </span>
                 <a
                   href={recipe.source_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#78947C] px-4 py-2 text-sm font-medium text-white hover:bg-[#647F68]"
+                  className="inline-flex items-center gap-1.5 font-semibold text-[#557059] underline hover:text-[#292D2A]"
                 >
-                  <span>View Instructions</span>
-                  <ExternalLink className="h-4 w-4" />
+                  <span>View Original Recipe</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               </div>
+            )}
+
+            {recipe.instructions.length === 0 ? (
+              <div className="mt-4 rounded-xl bg-[#F7F8F7] p-5">
+                <p className="text-sm text-[#292D2A]">
+                  Preparation steps could not be loaded automatically from{" "}
+                  <strong>{recipe.source_name}</strong>. Use the reference link above to view the full instructions on the publisher&apos;s page.
+                </p>
+              </div>
             ) : (
-              <ol className="mt-4 space-y-4">
-                {recipe.instructions.map((step) => (
-                  <li key={step.step} className="flex gap-3.5">
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#E7EFE7] text-xs font-bold text-[#3D5441]">
-                      {step.step}
-                    </span>
-                    <div className="space-y-1.5">
-                      <p className="text-sm leading-relaxed text-[#292D2A] sm:text-base">
-                        {step.instruction}
-                      </p>
-                      {step.temperature_note && (
-                        <p className="inline-flex items-center gap-1.5 text-xs font-medium text-[#557059]">
-                          <Thermometer className="h-3.5 w-3.5 text-[#78947C]" />
-                          <span>{step.temperature_note}</span>
+              <>
+                <ol className="mt-5 space-y-4">
+                  {(instructionsExpanded
+                    ? recipe.instructions
+                    : recipe.instructions.slice(0, 2)
+                  ).map((step) => (
+                    <li key={step.step} className="flex gap-3.5">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#E7EFE7] text-xs font-bold text-[#3D5441]">
+                        {step.step}
+                      </span>
+                      <div className="space-y-1.5">
+                        <p className="text-sm leading-relaxed text-[#292D2A] sm:text-base">
+                          {step.instruction}
                         </p>
+                        {step.temperature_note && (
+                          <p className="inline-flex items-center gap-1.5 text-xs font-medium text-[#557059]">
+                            <Thermometer className="h-3.5 w-3.5 text-[#78947C]" />
+                            <span>{step.temperature_note}</span>
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+
+                {recipe.instructions.length > 2 && (
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#F0F2F0] pt-4">
+                    <span className="text-xs text-[#777F78]">
+                      {instructionsExpanded
+                        ? `Showing all ${recipe.instructions.length} steps`
+                        : `Showing first 2 of ${recipe.instructions.length} steps`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setInstructionsExpanded((prev) => !prev)}
+                      aria-expanded={instructionsExpanded}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#DCE2DC] bg-[#F7F8F7] px-4 py-2 text-xs font-semibold text-[#292D2A] transition hover:border-[#78947C] hover:bg-[#E7EFE7]"
+                    >
+                      {instructionsExpanded ? (
+                        <>
+                          <span>Show Less</span>
+                          <ChevronUp className="h-4 w-4 text-[#557059]" />
+                        </>
+                      ) : (
+                        <>
+                          <span>
+                            Show Full Instructions ({recipe.instructions.length} steps)
+                          </span>
+                          <ChevronDown className="h-4 w-4 text-[#557059]" />
+                        </>
                       )}
-                    </div>
-                  </li>
-                ))}
-              </ol>
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </section>
 
