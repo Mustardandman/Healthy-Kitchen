@@ -831,7 +831,296 @@ def fetch_wikibooks_real(needed_counts: dict[str, int]) -> list[dict]:
     return collected
 
 
+DISH_FORM_WORDS = {
+    "soup", "stew", "chowder", "bisque", "chili", "curry", "salad", "sandwich",
+    "wrap", "wraps", "panini", "burger", "pancake", "pancakes", "waffle", "waffles",
+    "omelet", "omelette", "frittata", "quiche", "muffin", "muffins", "smoothie",
+    "shake", "lassi", "oatmeal", "porridge", "granola", "muesli", "casserole",
+    "pasta", "spaghetti", "noodle", "noodles", "risotto", "pilaf", "roast",
+    "meatloaf", "bread", "biscuit", "biscuits", "toast", "hummus", "guacamole",
+    "salsa", "dip", "crepe", "crepes", "bowl", "taco", "tacos", "enchilada",
+    "fajita", "parmesan", "grits", "shakshuka", "strata", "hash", "scrambled",
+    "poached", "fried", "baked", "grilled", "roasted", "stuffed", "steak",
+}
+
+PREPARED_FOOD_WORDS = DISH_FORM_WORDS | {
+    "dish", "meal", "plate", "cooked", "boiled", "simmered", "sauteed", "steamed",
+    "broth", "potage", "puree", "fillet", "breast", "chop", "cutlet", "skillet",
+    "dinner", "lunch", "breakfast", "snack", "serving", "served", "homemade",
+}
+
+BAD_IMG_RE = re.compile(
+    r"(?:logo|icon|map|diagram|svg|chart|flag|coat_of_arms|emblem|seal|menu|"
+    r"magazine|cookbook|newspaper|illustration|drawing|sketch|painting|poster|"
+    r"advert|book|page|scan|stouffer|microwave|frozen|packaging|package|label|"
+    r"supermarket|grocery|stall|market|restaurant|interior|building|exterior|"
+    r"kitchen|person|portrait|chef|woman|man|child|sign|street|cutting[_ ]board|"
+    r"chopping[_ ]board|raw_|uncooked|plant|flower|bush|tree|garden|harvest|"
+    r"field|farm|seedling|botanical|wikipedia|wikidata|screenshot|18\d\d|19[0-6]\d)",
+    re.I,
+)
+
+UNWANTED_PHOTO_PROTEINS_RE = re.compile(
+    r"\b(?:bacon|ham|salami|prosciutto|pepperoni|hotdog|cake|cupcake|donut|doughnut|cookie|ice_cream|candy)\b",
+    re.I,
+)
+
+
+def _clean_recipe_title_for_image(name: str) -> tuple[str, str]:
+    base = re.sub(r"\s+\b(?:I|II|III|IV|V)\b$", "", name.strip())
+    paren_match = re.search(r"\(([^)]+)\)", base)
+    paren_text = paren_match.group(1).strip() if paren_match else ""
+    no_paren = re.sub(r"\s*\([^)]+\)\s*", " ", base).strip()
+    no_paren = re.sub(r"\s+recipe$", "", no_paren, flags=re.I).strip()
+    return no_paren, paren_text
+
+
+def _build_dish_image_queries(recipe: dict) -> list[str]:
+    name = recipe["name"]
+    no_paren, paren_text = _clean_recipe_title_for_image(name)
+    queries = []
+
+    def add_q(q: str):
+        q = re.sub(r"[^a-zA-Z0-9\s\-']", " ", q).strip()
+        q = re.sub(r"\s+", " ", q)
+        if len(q) >= 3 and q not in queries:
+            queries.append(q)
+
+    add_q(no_paren)
+    if paren_text and not re.search(r"gluten|vegan|vegetarian|easy|quick", paren_text, re.I):
+        add_q(paren_text)
+
+    # Extract core 2-word dish phrase (e.g., "Tomato Soup", "Chicken Salad", "Oat Muffins")
+    words = [w.lower() for w in re.findall(r"[a-zA-Z]+", no_paren) if len(w) >= 3]
+    stop = {"with", "and", "the", "for", "easy", "basic", "simple", "quick", "style", "homemade", "best", "style"}
+    sig = [w for w in words if w not in stop]
+    for idx, w in enumerate(sig):
+        if w in DISH_FORM_WORDS:
+            if idx > 0:
+                add_q(f"{sig[idx - 1]} {w}")
+            if idx + 1 < len(sig):
+                add_q(f"{w} {sig[idx + 1]}")
+            add_q(w)
+            break
+    if len(sig) >= 2:
+        add_q(f"{sig[0]} {sig[-1]}")
+        add_q(f"{sig[-2]} {sig[-1]}")
+
+    # Broad fallback aligned with meal category & subcategory
+    sub = recipe.get("primarySubcategory", "")
+    if sub:
+        add_q(sub)
+    cat = recipe.get("mealCategory", "dinner")
+    cat_fallback = {
+        "breakfast": "healthy breakfast dish",
+        "lunch": "healthy lunch plate",
+        "dinner": "healthy dinner meal",
+        "snack": "healthy snack bowl",
+    }.get(cat, "healthy food dish")
+    add_q(cat_fallback)
+    return queries
+
+
+def _score_commons_candidate(
+    file_title: str,
+    info: dict,
+    recipe_name: str,
+    require_form_match: bool = True,
+) -> int:
+    mime = info.get("mime", "")
+    width = info.get("width", 0) or 0
+    height = info.get("height", 0) or 0
+    if mime not in ("image/jpeg", "image/png", "image/webp") or width < 400 or height < 240:
+        return -1
+
+    fname_clean = file_title.replace("File:", "").lower()
+    if BAD_IMG_RE.search(fname_clean):
+        return -1
+
+    rec_low = recipe_name.lower()
+    # Prevent bacon/cake photos appearing on unrelated healthy recipes
+    for bad_m in UNWANTED_PHOTO_PROTEINS_RE.findall(fname_clean):
+        if bad_m not in rec_low:
+            return -1
+
+    stop = {"with", "and", "the", "for", "easy", "basic", "simple", "quick", "jpg", "jpeg", "png", "webp", "img", "dsc", "px"}
+    title_words = {
+        w for w in re.findall(r"[a-z]{3,}", rec_low)
+        if w not in stop and w not in {"recipe", "homemade", "style"}
+    }
+    fname_words = set(re.findall(r"[a-z]{3,}", fname_clean))
+
+    # Normalize simple plurals for clean overlap
+    def stem_set(ws: set[str]) -> set[str]:
+        out = set(ws)
+        for w in ws:
+            if w.endswith("es") and len(w) > 4:
+                out.add(w[:-2])
+            elif w.endswith("s") and len(w) > 3:
+                out.add(w[:-1])
+        return out
+
+    t_stems = stem_set(title_words)
+    f_stems = stem_set(fname_words)
+    overlap = t_stems & f_stems
+
+    form_in_title = t_stems & DISH_FORM_WORDS
+    has_prepared = bool(f_stems & PREPARED_FOOD_WORDS)
+
+    if require_form_match:
+        if not overlap:
+            return -1
+        if form_in_title and not (form_in_title & f_stems) and not has_prepared:
+            return -1
+
+    score = len(overlap) * 35
+    score += len(form_in_title & f_stems) * 45
+    if has_prepared:
+        score += 20
+    if width >= 700:
+        score += 10
+    if width > height:
+        score += 5  # Landscape food photo fits 4:3 cards nicely
+    return score
+
+
+def assign_dish_matched_images(all_real: list[dict]) -> None:
+    wb_recipes = [r for r in all_real if r["id"].startswith("real-wb-")]
+    if not wb_recipes:
+        return
+
+    for r in wb_recipes:
+        r["imageUrl"] = ""
+
+    used_imgs = {r["imageUrl"] for r in all_real if r.get("imageUrl")}
+
+    # Step 1: Try Wikibooks lead pageimage in batches of 40
+    print(f"Checking Wikibooks lead photos for {len(wb_recipes)} recipes...")
+    title_to_recipe = {}
+    for r in wb_recipes:
+        slug = urllib.parse.unquote(r["sourceUrl"].split("/wiki/")[-1]).replace("_", " ")
+        title_to_recipe[slug] = r
+
+    wb_titles = list(title_to_recipe.keys())
+    for i in range(0, len(wb_titles), 40):
+        batch = wb_titles[i : i + 40]
+        u = (
+            "https://en.wikibooks.org/w/api.php?action=query&titles="
+            + urllib.parse.quote("|".join(batch))
+            + "&prop=pageimages&piprop=thumbnail&pithumbsize=800&format=json"
+        )
+        try:
+            d = fetch_json(u, WB_HEADERS)
+            for p in d.get("query", {}).get("pages", {}).values():
+                thumb = p.get("thumbnail", {}).get("source")
+                rec = title_to_recipe.get(p.get("title", ""))
+                if not rec or not thumb or thumb in used_imgs:
+                    continue
+                fname = urllib.parse.unquote(thumb.split("/")[-1]).lower()
+                if not BAD_IMG_RE.search(fname):
+                    rec["imageUrl"] = thumb
+                    used_imgs.add(thumb)
+        except Exception:
+            pass
+        time.sleep(0.25)
+
+    need_commons = [r for r in wb_recipes if not r["imageUrl"]]
+    print(f"Searching per-dish Wikimedia Commons photos for {len(need_commons)} remaining recipes...")
+
+    commons_cache: dict[str, list[tuple[str, dict, str]]] = {}
+
+    def search_commons(q: str) -> list[tuple[str, dict, str]]:
+        if q in commons_cache:
+            return commons_cache[q]
+        q_enc = urllib.parse.quote(f"filetype:bitmap {q}")
+        u = (
+            f"https://commons.wikimedia.org/w/api.php?action=query&generator=search"
+            f"&gsrnamespace=6&gsrsearch={q_enc}&gsrlimit=12"
+            f"&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=800&format=json"
+        )
+        hits = []
+        try:
+            d = fetch_json(u, WB_HEADERS)
+            for p in d.get("query", {}).get("pages", {}).values():
+                info = (p.get("imageinfo") or [{}])[0]
+                iu = info.get("thumburl") or info.get("url")
+                if iu:
+                    hits.append((p.get("title", ""), info, iu))
+        except Exception:
+            pass
+        commons_cache[q] = hits
+        time.sleep(0.15)
+        return hits
+
+    # Precompute unique queries across remaining recipes
+    recipe_queries = {r["id"]: _build_dish_image_queries(r) for r in need_commons}
+    # Fetch top 2 specific queries first concurrently so cache is warm
+    primary_qs = []
+    seen_q = set()
+    for r in need_commons:
+        for q in recipe_queries[r["id"]][:2]:
+            if q not in seen_q:
+                seen_q.add(q)
+                primary_qs.append(q)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        list(ex.map(search_commons, primary_qs))
+
+    matched_exact = 0
+    for idx, r in enumerate(need_commons):
+        qs = recipe_queries[r["id"]]
+        best_url = ""
+        best_score = -1
+
+        # Pass 1: Strict dish + form match
+        for q in qs[:-1]:
+            hits = search_commons(q)
+            for ftitle, info, iu in hits:
+                if iu in used_imgs:
+                    continue
+                sc = _score_commons_candidate(ftitle, info, r["name"], require_form_match=True)
+                if sc > best_score:
+                    best_score = sc
+                    best_url = iu
+            if best_score >= 55:
+                break
+
+        # Pass 2: Relaxed prepared-food / category match if exact match had no unused hit
+        if not best_url:
+            for q in qs:
+                hits = search_commons(q)
+                for ftitle, info, iu in hits:
+                    if iu in used_imgs:
+                        continue
+                    sc = _score_commons_candidate(ftitle, info, r["name"], require_form_match=False)
+                    if sc > best_score:
+                        best_score = sc
+                        best_url = iu
+                if best_url:
+                    break
+
+        if best_url:
+            r["imageUrl"] = best_url
+            used_imgs.add(best_url)
+            if best_score >= 35:
+                matched_exact += 1
+        else:
+            r["imageUrl"] = f"/images/food/grain-bowl.jpg?v={idx}"
+
+    print(f"Dish-matched Commons photos complete: {matched_exact}/{len(need_commons)} strong dish-title matches.")
+
+
 def main():
+    import sys
+
+    if "--images-only" in sys.argv:
+        all_real = json.loads(OUT_PATH.read_text(encoding="utf-8"))
+        print(f"Redoing dish-matched images across {len(all_real)} existing real recipes...")
+        assign_dish_matched_images(all_real)
+        OUT_PATH.write_text(json.dumps(all_real, indent=2), encoding="utf-8")
+        print("Saved updated dish-matched images to", OUT_PATH)
+        return
+
     print("1. Fetching real TheMealDB recipes with direct strSource URLs...")
     tmdb = fetch_themealdb_real()
     tmdb_counts = {"breakfast": 0, "lunch": 0, "dinner": 0, "snack": 0}
@@ -861,47 +1150,7 @@ def main():
         seen_srcs.add(r["sourceUrl"])
         all_real.append(r)
 
-    # Fetch extra verified Wikimedia Commons food photos if needed so zero recipes repeat or fall back
-    used_imgs = {r["imageUrl"] for r in all_real if r["imageUrl"]}
-    avail_pool = []
-    need_imgs = sum(1 for r in all_real if not r["imageUrl"])
-    if len(avail_pool) < need_imgs:
-        print(f"Fetching verified Wikimedia food images (need {need_imgs})...")
-        for q in [
-            "omelette", "oatmeal", "yogurt parfait", "smoothie", "avocado toast",
-            "pancakes berries", "breakfast food", "egg dish", "salad bowl",
-            "lentil soup", "vegetable soup", "sandwich", "quinoa bowl",
-            "healthy snack", "hummus vegetables", "nuts seeds", "cottage cheese",
-            "grilled salmon", "roasted chicken", "vegetable stir fry", "pasta dish",
-            "dinner plate", "porridge",
-        ]:
-            if len(avail_pool) >= need_imgs + 40:
-                break
-            q_enc = urllib.parse.quote(q)
-            u = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch={q_enc}&gsrlimit=50&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=800&format=json"
-            try:
-                d = fetch_json(u, WB_HEADERS)
-                for p in d.get("query", {}).get("pages", {}).values():
-                    info = (p.get("imageinfo") or [{}])[0]
-                    t = p.get("title", "").lower()
-                    if any(b in t for b in ("logo", "icon", "map", "diagram", "svg", "chart", "cake", "cookie", "donut")):
-                        continue
-                    if info.get("mime") in ("image/jpeg", "image/png", "image/webp") and info.get("width", 0) >= 400:
-                        iu = info.get("thumburl") or info.get("url")
-                        if iu and iu not in used_imgs and iu not in avail_pool:
-                            avail_pool.append(iu)
-            except Exception:
-                pass
-            time.sleep(0.5)
-
-    pool_idx = 0
-    for r in all_real:
-        if not r["imageUrl"]:
-            if pool_idx < len(avail_pool):
-                r["imageUrl"] = avail_pool[pool_idx]
-                pool_idx += 1
-            else:
-                r["imageUrl"] = "/images/food/grain-bowl.jpg"
+    assign_dish_matched_images(all_real)
 
     final_counts = {"breakfast": 0, "lunch": 0, "dinner": 0, "snack": 0}
     for r in all_real:

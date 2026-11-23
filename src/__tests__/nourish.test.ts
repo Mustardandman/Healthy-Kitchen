@@ -16,6 +16,7 @@ import {
   matchRecipesByFridgeIngredients,
   searchRecipes,
   setShoppingListCheck,
+  syncSharedFavorites,
   toggleFavorite,
 } from "@/db/queries";
 import {
@@ -200,6 +201,14 @@ describe("Favorites, Meal Planner & Consolidated Shopping List", () => {
     const fav1 = toggleFavorite(first.id);
     expect(fav1.isFavorited).toBe(true);
     expect(getFavorites().some((f) => f.id === first.id)).toBe(true);
+
+    // Favorites persist across seed resets and sync restoration
+    seedDatabase(true);
+    expect(getFavorites().some((f) => f.id === first.id)).toBe(true);
+
+    const synced = syncSharedFavorites([{ id: second.id }]);
+    expect(synced.ids).toContain(first.id);
+    expect(synced.ids).toContain(second.id);
 
     clearMealPlan();
     addMealPlanEntry({ dayOfWeek: "monday", mealSlot: "breakfast", recipeId: first.id, servingsMultiplier: 1 });

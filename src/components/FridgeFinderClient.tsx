@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChefHat, Loader2, Plus, X } from "lucide-react";
 import { RecipeCard } from "@/components/RecipeCard";
+import {
+  FAVORITES_UPDATED_EVENT,
+  toggleFavoriteClient,
+} from "@/lib/favorites-client";
 import type { FridgeMatchMode, FridgeMatchResult, MealCategory } from "@/types/recipe";
 
 interface CatalogItem {
@@ -119,18 +123,35 @@ export function FridgeFinderClient({
     );
   };
 
+  useEffect(() => {
+    const onUpdated = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ ids?: string[] }>).detail;
+      if (detail?.ids) {
+        setFavoriteIds(new Set(detail.ids));
+      }
+    };
+    window.addEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+  }, []);
+
   const handleToggleFavorite = async (recipeId: string) => {
+    const snapshot = results.find((r) => r.id === recipeId);
     setFavoriteIds((prev) => {
       const next = new Set(prev);
       if (next.has(recipeId)) next.delete(recipeId);
       else next.add(recipeId);
       return next;
     });
-    await fetch("/api/favorites", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recipeId }),
-    }).catch(() => {});
+    try {
+      await toggleFavoriteClient(recipeId, snapshot);
+    } catch {
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(recipeId)) next.delete(recipeId);
+        else next.add(recipeId);
+        return next;
+      });
+    }
   };
 
   return (

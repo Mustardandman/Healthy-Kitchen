@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -17,6 +17,10 @@ import {
   Thermometer,
 } from "lucide-react";
 import { DAYS_OF_WEEK } from "@/lib/categories";
+import {
+  FAVORITES_UPDATED_EVENT,
+  toggleFavoriteClient,
+} from "@/lib/favorites-client";
 import { formatMinutes, formatQuantity, formatSafetyLabel } from "@/lib/format";
 import { TRUSTED_HEALTH_AND_RECIPE_REFERENCES } from "@/lib/references";
 import type { DayOfWeek, MealCategory, RecipeDetail } from "@/types/recipe";
@@ -47,15 +51,22 @@ export function RecipeDetailClient({ recipe }: RecipeDetailClientProps) {
     });
   };
 
+  useEffect(() => {
+    const onUpdated = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ ids?: string[] }>).detail;
+      if (detail?.ids) {
+        setIsFavorited(detail.ids.includes(recipe.id));
+      }
+    };
+    window.addEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+  }, [recipe.id]);
+
   const handleToggleFavorite = async () => {
     const nextState = !isFavorited;
     setIsFavorited(nextState);
     try {
-      await fetch("/api/favorites", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipeId: recipe.id }),
-      });
+      await toggleFavoriteClient(recipe.id, recipe);
     } catch {
       setIsFavorited(!nextState);
     }

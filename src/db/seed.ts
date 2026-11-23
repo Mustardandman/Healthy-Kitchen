@@ -47,8 +47,28 @@ export function seedDatabase(reset = true): {
   snack: number;
 } {
   const db = getDb();
+  let preservedFavorites: Array<{ recipe_id: string; saved_at: string }> = [];
+  let preservedExternalRecipes: Array<Record<string, unknown>> = [];
 
   if (reset) {
+    try {
+      preservedFavorites = db
+        .prepare(`SELECT recipe_id, saved_at FROM favorites`)
+        .all() as Array<{ recipe_id: string; saved_at: string }>;
+      if (preservedFavorites.length > 0) {
+        preservedExternalRecipes = db
+          .prepare(
+            `SELECT r.* FROM recipes r
+             JOIN favorites f ON f.recipe_id = r.id
+             WHERE r.id NOT LIKE 'real-%'`
+          )
+          .all() as Array<Record<string, unknown>>;
+      }
+    } catch {
+      preservedFavorites = [];
+      preservedExternalRecipes = [];
+    }
+
     db.exec(`
       DELETE FROM meal_plan_entries;
       DELETE FROM favorites;
@@ -262,6 +282,83 @@ export function seedDatabase(reset = true): {
   });
 
   runSeedTx();
+
+  if (preservedExternalRecipes.length > 0) {
+    const restoreExtRecipe = db.prepare(`
+      INSERT OR IGNORE INTO recipes (
+        id, slug, name, description, meal_category, primary_subcategory, image_url, cuisine, difficulty,
+        prep_time_min, cook_time_min, total_time_min, servings, instructions_json, instructions_license_mode,
+        health_assessment_json, nutrition_calories, nutrition_carbs_g, nutrition_protein_g, nutrition_fat_g,
+        nutrition_fiber_g, nutrition_sugar_g, nutrition_added_sugar_g, nutrition_sodium_mg,
+        nutrition_calcium_mg, nutrition_iron_mg, nutrition_folate_mcg, nutrition_is_estimated, nutrition_source,
+        pregnancy_safety_status, pregnancy_safety_notes, cooking_temp_guidance,
+        source_name, source_attribution, source_url, license_type, is_featured, popularity_score, created_at
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?
+      )
+    `);
+    for (const row of preservedExternalRecipes) {
+      restoreExtRecipe.run(
+        row.id,
+        row.slug,
+        row.name,
+        row.description,
+        row.meal_category,
+        row.primary_subcategory,
+        row.image_url,
+        row.cuisine,
+        row.difficulty,
+        row.prep_time_min,
+        row.cook_time_min,
+        row.total_time_min,
+        row.servings,
+        row.instructions_json,
+        row.instructions_license_mode,
+        row.health_assessment_json,
+        row.nutrition_calories,
+        row.nutrition_carbs_g,
+        row.nutrition_protein_g,
+        row.nutrition_fat_g,
+        row.nutrition_fiber_g,
+        row.nutrition_sugar_g,
+        row.nutrition_added_sugar_g,
+        row.nutrition_sodium_mg,
+        row.nutrition_calcium_mg,
+        row.nutrition_iron_mg,
+        row.nutrition_folate_mcg,
+        row.nutrition_is_estimated,
+        row.nutrition_source,
+        row.pregnancy_safety_status,
+        row.pregnancy_safety_notes,
+        row.cooking_temp_guidance,
+        row.source_name,
+        row.source_attribution,
+        row.source_url,
+        row.license_type,
+        row.is_featured,
+        row.popularity_score,
+        row.created_at
+      );
+    }
+  }
+
+  if (preservedFavorites.length > 0) {
+    const checkExists = db.prepare(`SELECT 1 FROM recipes WHERE id = ?`);
+    const restoreFav = db.prepare(
+      `INSERT OR IGNORE INTO favorites (recipe_id, saved_at) VALUES (?, ?)`
+    );
+    for (const fav of preservedFavorites) {
+      if (checkExists.get(fav.recipe_id)) {
+        restoreFav.run(fav.recipe_id, fav.saved_at);
+      }
+    }
+  }
 
   const counts = db
     .prepare(`SELECT meal_category, COUNT(*) as count FROM recipes GROUP BY meal_category`)

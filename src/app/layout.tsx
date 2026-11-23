@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
+import { FavoritesSyncBridge } from "@/components/FavoritesSyncBridge";
 
 const plusJakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
@@ -24,6 +25,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={plusJakarta.variable}>
       <body className="min-h-screen bg-white text-[#292D2A] antialiased">
+        <FavoritesSyncBridge />
         <Navbar />
         <main className="min-h-[70vh]">{children}</main>
         <Footer />

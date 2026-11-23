@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Heart } from "lucide-react";
 import { RecipeCard } from "@/components/RecipeCard";
+import {
+  FAVORITES_UPDATED_EVENT,
+  toggleFavoriteClient,
+} from "@/lib/favorites-client";
 import type { RecipeCardItem } from "@/types/recipe";
 
 interface FavoritesClientProps {
@@ -13,13 +17,29 @@ interface FavoritesClientProps {
 export function FavoritesClient({ initialItems }: FavoritesClientProps) {
   const [items, setItems] = useState<RecipeCardItem[]>(initialItems);
 
+  useEffect(() => {
+    setItems(initialItems);
+  }, [initialItems]);
+
+  useEffect(() => {
+    const onUpdated = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ ids?: string[]; items?: RecipeCardItem[] }>).detail;
+      if (detail?.items) {
+        setItems(detail.items);
+      }
+    };
+    window.addEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+  }, []);
+
   const handleToggleFavorite = async (recipeId: string) => {
+    const target = items.find((item) => item.id === recipeId);
     setItems((prev) => prev.filter((item) => item.id !== recipeId));
-    await fetch("/api/favorites", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recipeId }),
-    }).catch(() => {});
+    try {
+      await toggleFavoriteClient(recipeId, target);
+    } catch {
+      if (target) setItems((prev) => [target, ...prev]);
+    }
   };
 
   if (items.length === 0) {

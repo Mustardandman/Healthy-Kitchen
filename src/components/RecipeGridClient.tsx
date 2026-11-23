@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { RecipeCard } from "@/components/RecipeCard";
+import {
+  FAVORITES_UPDATED_EVENT,
+  toggleFavoriteClient,
+} from "@/lib/favorites-client";
 import type { RecipeCardItem } from "@/types/recipe";
 
 interface RecipeGridClientProps {
@@ -21,7 +25,19 @@ export function RecipeGridClient({
     setFavoriteIds(new Set(initialFavoriteIds));
   }, [initialFavoriteIds]);
 
+  useEffect(() => {
+    const onUpdated = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ ids?: string[] }>).detail;
+      if (detail?.ids) {
+        setFavoriteIds(new Set(detail.ids));
+      }
+    };
+    window.addEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+  }, []);
+
   const handleToggle = async (recipeId: string) => {
+    const snapshot = recipes.find((r) => r.id === recipeId);
     setFavoriteIds((prev) => {
       const next = new Set(prev);
       if (next.has(recipeId)) next.delete(recipeId);
@@ -30,12 +46,7 @@ export function RecipeGridClient({
     });
 
     try {
-      const res = await fetch("/api/favorites", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipeId }),
-      });
-      if (!res.ok) throw new Error("Failed to toggle favorite");
+      await toggleFavoriteClient(recipeId, snapshot);
     } catch {
       // Revert if API fails
       setFavoriteIds((prev) => {

@@ -4,6 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Filter, Loader2, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
 import { RecipeCard } from "@/components/RecipeCard";
 import { CLASSIFICATION_OPTIONS, SUBCATEGORIES_BY_CATEGORY } from "@/lib/categories";
+import {
+  FAVORITES_UPDATED_EVENT,
+  toggleFavoriteClient,
+} from "@/lib/favorites-client";
 import type {
   Difficulty,
   MealCategory,
@@ -171,18 +175,35 @@ export function CategoryBrowseClient({
     setHasInteracted(true);
   };
 
+  useEffect(() => {
+    const onUpdated = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ ids?: string[] }>).detail;
+      if (detail?.ids) {
+        setFavoriteIds(new Set(detail.ids));
+      }
+    };
+    window.addEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(FAVORITES_UPDATED_EVENT, onUpdated);
+  }, []);
+
   const handleToggleFavorite = async (recipeId: string) => {
+    const snapshot = items.find((r) => r.id === recipeId);
     setFavoriteIds((prev) => {
       const next = new Set(prev);
       if (next.has(recipeId)) next.delete(recipeId);
       else next.add(recipeId);
       return next;
     });
-    await fetch("/api/favorites", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recipeId }),
-    }).catch(() => {});
+    try {
+      await toggleFavoriteClient(recipeId, snapshot);
+    } catch {
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(recipeId)) next.delete(recipeId);
+        else next.add(recipeId);
+        return next;
+      });
+    }
   };
 
   const toggleDietary = (tag: string) => {

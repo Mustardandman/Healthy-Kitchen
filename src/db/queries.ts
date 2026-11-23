@@ -849,6 +849,87 @@ export function upsertExternalRecipeRecord(recipe: RecipeDetail): void {
   tx();
 }
 
+export function cardSnapshotToRecipeDetail(card: RecipeCardItem): RecipeDetail {
+  return {
+    ...card,
+    ingredients: [],
+    instructions: [],
+    instructions_license_mode: "link_only",
+    health_assessment: {
+      nutritiousHighlights: ["Saved recipe card snapshot."],
+      potentialDrawbacks: [],
+      substitutions: [],
+    },
+    pregnancy_safety_notes:
+      "Review full ingredient details before preparing if recovering after a server restart.",
+    cooking_temp_guidance: null,
+    source_name: card.primary_subcategory || "External Source",
+    source_attribution: card.nutrition.source || "Nourish Recipe Platform",
+    source_url: null,
+    license_type: "Saved External Favorite",
+    is_favorited: true,
+  };
+}
+
+export function syncSharedFavorites(
+  entries: Array<{
+    id: string;
+    savedAt?: string;
+    snapshot?: RecipeCardItem;
+    detail?: RecipeDetail;
+  }>
+): { ids: string[]; items: RecipeCardItem[] } {
+  const db = getDb();
+  const insertFav = db.prepare(
+    `INSERT OR IGNORE INTO favorites (recipe_id, saved_at) VALUES (?, ?)`
+  );
+  const checkRecipe = db.prepare(`SELECT id FROM recipes WHERE id = ? OR slug = ? LIMIT 1`);
+
+  for (const entry of entries) {
+    if (!entry?.id) continue;
+    let found = checkRecipe.get(entry.id, entry.id) as { id: string } | undefined;
+    if (!found && entry.detail) {
+      upsertExternalRecipeRecord(entry.detail);
+      found = { id: entry.detail.id };
+    } else if (!found && entry.snapshot) {
+      upsertExternalRecipeRecord(cardSnapshotToRecipeDetail(entry.snapshot));
+      found = { id: entry.snapshot.id };
+    }
+    if (found) {
+      insertFav.run(found.id, entry.savedAt || new Date().toISOString());
+    }
+  }
+
+  return {
+    ids: getFavoriteIds(),
+    items: getFavorites(),
+  };
+}
+
+export function getFavoritesExportPayload(): {
+  favorites: Array<{ id: string; savedAt: string; detail?: RecipeDetail }>;
+  updatedAt: string;
+} {
+  const db = getDb();
+  const rows = db
+    .prepare(`SELECT recipe_id, saved_at FROM favorites ORDER BY saved_at DESC`)
+    .all() as Array<{ recipe_id: string; saved_at: string }>;
+
+  const favorites = rows.map((row) => {
+    const isExternal = !row.recipe_id.startsWith("real-");
+    return {
+      id: row.recipe_id,
+      savedAt: row.saved_at,
+      ...(isExternal ? { detail: getRecipeByIdOrSlug(row.recipe_id) ?? undefined } : {}),
+    };
+  });
+
+  return {
+    favorites,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function getMealPlanEntries(): MealPlanEntry[] {
   const db = getDb();
   const rows = db
