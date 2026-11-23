@@ -2,6 +2,7 @@ import { ensureSeeded } from "@/db/ensure-seeded";
 import { getAvailableCuisines, getFavoriteIds, searchRecipes } from "@/db/queries";
 import {
   getExternalProviderStatus,
+  prioritizeAmericanRecipes,
   searchEdamamRecipes,
   searchTheMealDbRecipes,
 } from "@/lib/providers/external-apis";
@@ -52,7 +53,10 @@ export default async function AllRecipesPage({
       : Promise.resolve([]),
   ]);
 
-  const combinedInitial = [...edamamLive, ...tmdbLive, ...initialData.items].slice(0, 24);
+  const combined = [...edamamLive, ...tmdbLive, ...initialData.items];
+  const combinedInitial = (
+    sort === "relevant" ? prioritizeAmericanRecipes(combined) : combined
+  ).slice(0, 24);
   const cuisines = getAvailableCuisines();
   const favoriteIds = getFavoriteIds();
 

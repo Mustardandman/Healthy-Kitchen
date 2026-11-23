@@ -94,6 +94,31 @@ const fatsecretDetailCache = new Map<string, { expiresAt: number; data: RecipeDe
 
 let fatsecretTokenCache: { token: string; expiresAt: number } | null = null;
 
+export function normalizeCuisineLabel(raw?: string): string {
+  const clean = (raw || "").trim();
+  if (!clean) return "International";
+  const low = clean.toLowerCase();
+  if (low === "united states" || low === "usa" || low === "american") return "American";
+  return clean
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+export function getExternalCuisinePriority(cuisine?: string): number {
+  const low = (cuisine || "").trim().toLowerCase();
+  if (low === "american" || low === "united states" || low === "usa") return 0;
+  if (["canadian", "british", "australian", "irish"].includes(low)) return 1;
+  if (low === "international" || !low) return 2;
+  return 3;
+}
+
+export function prioritizeAmericanRecipes<T extends { cuisine?: string }>(items: T[]): T[] {
+  return [...items].sort(
+    (a, b) => getExternalCuisinePriority(a.cuisine) - getExternalCuisinePriority(b.cuisine)
+  );
+}
+
 function mapMealCategory(raw?: string): MealCategory {
   const low = (raw || "").toLowerCase();
   if (low.includes("breakfast") || low.includes("morning")) return "breakfast";
@@ -568,7 +593,7 @@ function mapEdamamRawToDetail(
     primary_subcategory: r.source,
     subcategories: [r.source],
     image_url: r.image || "/images/food/grain-bowl.jpg",
-    cuisine: r.cuisineType?.[0] || "International",
+    cuisine: normalizeCuisineLabel(r.cuisineType?.[0] || "International"),
     difficulty: totalTime <= 30 ? "Easy" : "Medium",
     prep_time_min: Math.round(totalTime * 0.35),
     cook_time_min: Math.round(totalTime * 0.65),
@@ -608,6 +633,7 @@ function mapEdamamRawToDetail(
 export async function searchEdamamRecipes(params: {
   query?: string;
   category?: MealCategory | "";
+  cuisine?: string;
   limit?: number;
 }): Promise<RecipeCardItem[]> {
   const appId = process.env.EDAMAM_APP_ID;
@@ -625,25 +651,29 @@ export async function searchEdamamRecipes(params: {
     params.query?.trim() ||
     (params.category ? defaultQueryByCat[params.category] : "healthy balanced salmon chicken");
   const limit = params.limit ?? 8;
-  const cacheKey = `${q}::${params.category || ""}::${limit}`;
+  const cuisineFilter = params.cuisine?.trim() || "";
+  const preferAmerican = !cuisineFilter || cuisineFilter.toLowerCase() === "american";
+  const cacheKey = `${q}::${params.category || ""}::${cuisineFilter}::${limit}`;
 
   const cached = edamamSearchCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
 
-  const sp = new URLSearchParams({
-    type: "public",
-    q,
-    app_id: appId,
-    app_key: appKey,
-    health: "alcohol-free",
-  });
-  if (params.category) {
-    sp.set("mealType", params.category === "snack" ? "Snack" : params.category);
-  }
-
-  try {
+  const fetchBatch = async (cuisineType?: string): Promise<RecipeCardItem[]> => {
+    const sp = new URLSearchParams({
+      type: "public",
+      q,
+      app_id: appId,
+      app_key: appKey,
+      health: "alcohol-free",
+    });
+    if (params.category) {
+      sp.set("mealType", params.category === "snack" ? "Snack" : params.category);
+    }
+    if (cuisineType) {
+      sp.set("cuisineType", cuisineType);
+    }
     const res = await fetch(`https://api.edamam.com/api/recipes/v2?${sp.toString()}`, {
       cache: "no-store",
     });
@@ -651,8 +681,7 @@ export async function searchEdamamRecipes(params: {
     const json = (await res.json()) as {
       hits?: Array<{ recipe: EdamamRawRecipe }>;
     };
-
-    const items: RecipeCardItem[] = (json.hits ?? []).slice(0, limit).map((hit) => {
+    return (json.hits ?? []).slice(0, limit).map((hit) => {
       const detail = mapEdamamRawToDetail(hit.recipe, params.category);
       return {
         id: detail.id,
@@ -677,6 +706,23 @@ export async function searchEdamamRecipes(params: {
         created_at: detail.created_at,
       };
     });
+  };
+
+  try {
+    let items: RecipeCardItem[];
+    if (preferAmerican) {
+      const americanHits = await fetchBatch("American");
+      if (americanHits.length >= limit || cuisineFilter.toLowerCase() === "american") {
+        items = americanHits.slice(0, limit);
+      } else {
+        const globalHits = await fetchBatch();
+        const seen = new Set(americanHits.map((r) => r.id));
+        const combined = [...americanHits, ...globalHits.filter((r) => !seen.has(r.id))];
+        items = prioritizeAmericanRecipes(combined).slice(0, limit);
+      }
+    } else {
+      items = await fetchBatch(cuisineFilter);
+    }
 
     edamamSearchCache.set(cacheKey, {
       expiresAt: Date.now() + THIRTY_MIN_MS,
@@ -721,7 +767,7 @@ export async function findEdamamByIngredients(params: {
 
     const userTerms = params.ingredients.map((s) => s.trim().toLowerCase()).filter(Boolean);
 
-    return (json.hits ?? []).slice(0, params.limit ?? 8).map((hit) => {
+    const mapped = (json.hits ?? []).slice(0, params.limit ?? 8).map((hit) => {
       const detail = mapEdamamRawToDetail(hit.recipe, params.category);
       const lines = (hit.recipe.ingredientLines ?? []).map((l) => l.toLowerCase());
       const matched = userTerms.filter((t) => lines.some((line) => line.includes(t)));
@@ -763,6 +809,7 @@ export async function findEdamamByIngredients(params: {
         match_percentage: pct,
       };
     });
+    return prioritizeAmericanRecipes(mapped);
   } catch {
     return [];
   }
@@ -1158,23 +1205,24 @@ export async function searchTheMealDbRecipes(params: {
     );
     if (!res.ok) return [];
     const json = (await res.json()) as { meals?: TheMealDbRaw[] | null };
-    const meals = (json.meals ?? []).slice(0, params.limit ?? 6);
+    const meals = json.meals ?? [];
 
-    return meals.map((m) => {
+    const mapped: RecipeCardItem[] = meals.map((m) => {
       const mealCat = params.category || mapMealCategory(m.strCategory);
       const slug = `themealdb-${m.idMeal}`;
+      const cuisine = normalizeCuisineLabel(m.strArea || "International");
       return {
         id: slug,
         slug,
         name: m.strMeal,
-        description: `${m.strArea || "International"} ${
+        description: `${cuisine} ${
           m.strCategory || "dish"
         } via TheMealDB. Open for ingredients, pregnancy safety review, and original source link.`,
         meal_category: mealCat,
         primary_subcategory: m.strCategory || "TheMealDB",
         subcategories: [m.strCategory || "TheMealDB"],
         image_url: m.strMealThumb || "/images/food/grain-bowl.jpg",
-        cuisine: m.strArea || "International",
+        cuisine,
         difficulty: "Medium",
         prep_time_min: 15,
         cook_time_min: 25,
@@ -1202,6 +1250,7 @@ export async function searchTheMealDbRecipes(params: {
         created_at: new Date().toISOString(),
       };
     });
+    return prioritizeAmericanRecipes(mapped).slice(0, params.limit ?? 6);
   } catch {
     return [];
   }
@@ -1329,7 +1378,7 @@ export async function getTheMealDbRecipeDetail(slug: string): Promise<RecipeDeta
       primary_subcategory: m.strCategory || "TheMealDB",
       subcategories: [m.strCategory || "TheMealDB"],
       image_url: m.strMealThumb || "/images/food/grain-bowl.jpg",
-      cuisine: m.strArea || "International",
+      cuisine: normalizeCuisineLabel(m.strArea || "International"),
       difficulty: "Medium",
       prep_time_min: 15,
       cook_time_min: 25,

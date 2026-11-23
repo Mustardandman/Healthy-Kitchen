@@ -4,6 +4,7 @@ import { ensureSeeded } from "@/db/ensure-seeded";
 import { getFavoriteIds, getHomepageSections } from "@/db/queries";
 import {
   getExternalProviderStatus,
+  prioritizeAmericanRecipes,
   searchEdamamRecipes,
   searchTheMealDbRecipes,
 } from "@/lib/providers/external-apis";
@@ -37,8 +38,8 @@ export default async function HomePage() {
       : Promise.resolve([]),
   ]);
 
-  const pick4 = <T,>(live: T[], fallback: T[]) =>
-    [...live, ...fallback].slice(0, 4);
+  const pick4 = <T extends { cuisine?: string }>(live: T[], fallback: T[]) =>
+    prioritizeAmericanRecipes([...live, ...fallback]).slice(0, 4);
 
   const sectionList = [
     {

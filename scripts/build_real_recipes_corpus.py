@@ -521,15 +521,17 @@ def fetch_themealdb_real() -> list[dict]:
                     steps.append({"step": len(steps) + 1, "instruction": clean_p})
 
             host = parsed.netloc.replace("www.", "")
+            raw_area = (m.get("strArea") or "International").strip()
+            cuisine_name = "American" if raw_area.lower() in ("united states", "american", "usa") else raw_area
             recipes.append({
                 "id": f"real-tmdb-{m['idMeal']}",
                 "name": title,
-                "description": f"{m.get('strArea') or 'International'} {cat.lower() or 'recipe'} originally published on {host}. Ingredients and nutrition estimates reviewed for pregnancy mindfulness.",
+                "description": f"{cuisine_name} {cat.lower() or 'recipe'} originally published on {host}. Ingredients and nutrition estimates reviewed for pregnancy mindfulness.",
                 "mealCategory": meal_cat,
                 "primarySubcategory": primary_sub,
                 "subcategories": subs,
                 "imageUrl": thumb,
-                "cuisine": m.get("strArea") or "International",
+                "cuisine": cuisine_name,
                 "difficulty": "Easy" if len(ings) <= 7 else "Medium",
                 "prepTimeMin": 12,
                 "cookTimeMin": 20 if meal_cat in ("lunch", "dinner") else 10,
@@ -545,7 +547,71 @@ def fetch_themealdb_real() -> list[dict]:
     return recipes
 
 
-def parse_wikibooks_wikitext(title: str, wikitext: str, is_breakfast_cat: bool = False) -> dict | None:
+CUISINE_KEYWORDS = [
+    ("Italian", r"\b(?:italian|tuscan|sicilian|roman|venetian|napoli|risotto|pasta alla|parmigiana|minestrone|cioppino|cacciatore)\b"),
+    ("Mexican", r"\b(?:mexican|oaxacan|yucatan|poblano|enchilada|chilaquiles|tostada|pozole|molcajete|salsa verde|quesadilla)\b"),
+    ("Thai", r"\b(?:thai|panang|kaeng|tom yum|tom kha|pad thai|som tam|laab|larb)\b"),
+    ("Vietnamese", r"\b(?:vietnamese|pho|phở|banh mi|bánh mì|bun cha|goi cuon)\b"),
+    ("Chinese", r"\b(?:chinese|sichuan|szechuan|cantonese|kung pao|congee|dim sum|chow mein|lo mein|egg drop|wonton|bok choy)\b"),
+    ("Japanese", r"\b(?:japanese|teriyaki|miso|tamagoyaki|ramen|udon|soba|edamame|onigiri|katsu|donburi)\b"),
+    ("Korean", r"\b(?:korean|bibimbap|bulgogi|japchae|kimchi|doenjang|jjigae)\b"),
+    ("Indian", r"\b(?:indian|tandoori|tikka|masala|korma|dal|daal|dahl|biryani|vindaloo|saag|palak|paneer|rogan josh|sambar|idli|dosa|upma|poha|chana|rajma)\b"),
+    ("Greek", r"\b(?:greek|tzatziki|souvlaki|avgolemono|spanakopita|horiatiki|fasolada|moussaka)\b"),
+    ("French", r"\b(?:french|provencal|provençal|ratatouille|bouillabaisse|nicoise|niçoise|marengo|vichyssoise|potage)\b"),
+    ("Spanish", r"\b(?:spanish|andalusian|catalan|gazpacho|paella|tortilla española|patatas|ajo blanco)\b"),
+    ("Turkish", r"\b(?:turkish|menemen|cilbir|çılbır|ayran|borek|börek|cacik|kumpir|kisir)\b"),
+    ("Middle Eastern", r"\b(?:lebanese|syrian|yemeni|iraqi|saudi|iranian|persian|egyptian|palestinian|jordanian|levantine|arab|shakshuka|falafel|tabbouleh|baba ganoush|mujadara|ful medames|fatteh|lahsa|kabsa|dolma|kibbeh|maqluba|musakhan)\b"),
+    ("North African", r"\b(?:moroccan|algerian|tunisian|libyan|tajine|tagine|chorba|couscous|harira|chermoula|dajaj|harissa)\b"),
+    ("African", r"\b(?:ethiopian|nigerian|kenyan|gambian|ghanaian|somali|tanzanian|senegalese|liberian|rwandan|ugandan|south african|cape malay|jollof|doro|mtori|canjeero|egusi|superkanja|ugali|sukuma|agbalumo|ibirayi)\b"),
+    ("Eastern European", r"\b(?:polish|russian|ukrainian|hungarian|slovak|bulgarian|croatian|romanian|serbian|borscht|rosol|rosół|syrniki|racuszki|goulash|paprikash|kasha|varaniki|kashkaval|kotlety)\b"),
+    ("German", r"\b(?:german|bavarian|austrian|swiss|spaetzle|spätzle|kaspressknödel|rouladen|kartoffelsalat)\b"),
+    ("Indonesian", r"\b(?:indonesian|balinese|javanese|soto ayam|gado-gado|rendang|tempeh|nasi goreng|mie goreng)\b"),
+    ("Filipino", r"\b(?:filipino|adobo|sinigang|tinola|pancit|pinakbet|laing)\b"),
+    ("Latin American", r"\b(?:peruvian|venezuelan|argentine|argentinian|colombian|brazilian|chilean|cuban|puerto rican|arepa|empanada|feijoada|lomo|bolani|pebre|moqueca|sopaipilla|dobladita)\b"),
+    ("British", r"\b(?:british|english|scottish|irish|welsh|hotpot|champ|colcannon|kedgeree|shepherd's pie|cottage pie)\b"),
+    ("Canadian", r"\b(?:canadian|ontario|quebec|jiggs dinner)\b"),
+    ("Caribbean", r"\b(?:jamaican|caribbean|haitian|trinidadian|barbadian|bajan|antiguan|barbados|cayman|jerk|pepperpot|callaloo|joumou)\b"),
+    ("Nordic", r"\b(?:norwegian|swedish|danish|finnish|nordic|frikadeller|gravlax|knäckebröd)\b"),
+    ("Dutch", r"\b(?:dutch|belgian|flemish|stamppot|waterzooi|hutsepot)\b"),
+]
+
+INTERNATIONAL_DISH_MARKERS = re.compile(
+    r"\b(?:haft mewa|jajek|flija|chana|sabzi|khichdi|pachadi|rasam|thoran|avial|kitchari|kadhi|pulao|haleem|nihari|bhindi|aloo|baingan|matar|malai|kulfi|lassi|pakora|samosa|uttapam|appam|puttu|pitha|modak|laddoo|payasam|bobotie|brik|msemen|baghrir|harissa|zaalouk|labneh|manakish|fattoush|kousa|bamia|molokhia|fesenjan|ghormeh|zereshk|kuku|ash reshteh|tostones|maduros|mofongo|sancocho|locro|humita|causa|anticucho|caldo|estofado|guiso|puchero|gazpachuelo|salmorejo|fabada|cocido|pisto|zarzuela|escabeche|brandade|piperade|garbure|pot-au-feu|blanquette|tartiflette|clafoutis|farinata|ribollita|pappa al pomodoro|caponata|vignarola|acquacotta|stracciatella|zuppa|fagioli|peperonata|vitello|saltimbocca|ossobuco|bucatini|orecchiette|gnocchi|polenta|pierogi|golabki|bigos|zurek|solyanka|okroshka|rassolnik|shchi|pelmeni|blini|oladyi|kulebyaka|plov|lagman|manti|samsa|beshbarmak|khachapuri|lobio|khinkali|chakhokhbili|banitsa|tarator|shopska|musaka|sarma|punjene|cevapcici|djuvec|pasulj|mamaliga|mititei|ciorba|ghiveci)\b",
+    re.I,
+)
+
+
+def detect_wikibooks_cuisine(clean_name: str, wikitext: str, in_us_cat: bool) -> str:
+    cat_lines = " ".join(re.findall(r"\[\[Category:([^\]]+)\]\]", wikitext, re.I))
+    search_blob = f"{clean_name} {cat_lines}".lower()
+
+    for label, pattern in CUISINE_KEYWORDS:
+        if re.search(pattern, search_blob, re.I):
+            return label
+
+    if INTERNATIONAL_DISH_MARKERS.search(clean_name):
+        return "International"
+
+    # Non-ASCII diacritics or parenthetical native/translated foreign names typical of international recipes
+    if re.search(r"[^\x00-\x7F]", clean_name):
+        return "International"
+
+    if in_us_cat or re.search(
+        r"\b(?:united states|american recipes|north american|southern recipes|cajun|tex-mex|new england|midwestern|californian)\b",
+        cat_lines,
+        re.I,
+    ):
+        return "American"
+
+    if re.search(r"\([^)]+\)$", clean_name) and not re.search(r"\((?:gluten[- ]free|vegan|vegetarian|easy|quick|low[- ]carb)\)$", clean_name, re.I):
+        return "International"
+
+    return "American"
+
+
+def parse_wikibooks_wikitext(
+    title: str, wikitext: str, is_breakfast_cat: bool = False, in_us_cat: bool = False
+) -> dict | None:
     if "#redirect" in wikitext.lower()[:40]:
         return None
     clean_name = title.replace("Cookbook:", "").strip()
@@ -645,17 +711,19 @@ def parse_wikibooks_wikitext(title: str, wikitext: str, is_breakfast_cat: bool =
     if tm:
         total_time = max(5, min(240, int(tm.group(1))))
 
+    cats_text = " ".join(re.findall(r"\[\[Category:([^\]]+)\]\]", wikitext, re.I)).lower()
     raw_cat = ""
-    if is_breakfast_cat or any(w in wikitext.lower() for w in ("breakfast", "brunch")):
+    if is_breakfast_cat or any(w in f"{clean_name.lower()} {cats_text}" for w in ("breakfast", "brunch")):
         raw_cat = "Breakfast"
-    elif any(w in wikitext.lower() for w in ("snack", "appetizer", "dip")):
+    elif any(w in f"{clean_name.lower()} {cats_text}" for w in ("snack", "appetizer", "hors d'oeuvre", "finger food")):
         raw_cat = "Snack"
-    elif any(w in wikitext.lower() for w in ("vegetarian", "vegan")):
+    elif any(w in cats_text for w in ("vegetarian", "vegan")):
         raw_cat = "Vegetarian"
 
     meal_cat, primary_sub, subs = classify_meal_and_subs(
         clean_name, raw_cat, [x["ingredientId"] for x in ings], " ".join(s["instruction"] for s in steps)
     )
+    cuisine_name = detect_wikibooks_cuisine(clean_name, wikitext, in_us_cat)
 
     page_slug = urllib.parse.quote(title.replace(" ", "_"), safe=":/")
     wb_url = f"https://en.wikibooks.org/wiki/{page_slug}"
@@ -663,12 +731,12 @@ def parse_wikibooks_wikitext(title: str, wikitext: str, is_breakfast_cat: bool =
     return {
         "id": "real-wb-" + re.sub(r"[^a-z0-9]+", "-", clean_name.lower()).strip("-")[:48],
         "name": clean_name,
-        "description": f"Real community-authored recipe from Wikibooks Cookbook (CC BY-SA 4.0) featuring {ings[0]['displayName']}.",
+        "description": f"Real {cuisine_name} recipe from Wikibooks Cookbook (CC BY-SA 4.0) featuring {ings[0]['displayName']}.",
         "mealCategory": meal_cat,
         "primarySubcategory": primary_sub,
         "subcategories": subs,
         "imageUrl": "",  # Filled with verified unique food photo
-        "cuisine": "International",
+        "cuisine": cuisine_name,
         "difficulty": "Easy" if total_time <= 30 and len(ings) <= 8 else "Medium",
         "prepTimeMin": max(5, round(total_time * 0.35)),
         "cookTimeMin": max(0, round(total_time * 0.65)),
@@ -684,10 +752,11 @@ def parse_wikibooks_wikitext(title: str, wikitext: str, is_breakfast_cat: bool =
 
 
 def fetch_wikibooks_real(needed_counts: dict[str, int]) -> list[dict]:
-    # Gather Category:Breakfast_recipes + Category:Recipes titles
+    # Gather Category:United_States_recipes + Category:Breakfast_recipes + Category:Recipes titles
     titles = []
     bf_cat_titles = set()
-    for cat_name in ("Category:Breakfast_recipes", "Category:Egg_recipes", "Category:Recipes"):
+    us_cat_titles = set()
+    for cat_name in ("Category:United_States_recipes", "Category:Breakfast_recipes", "Category:Egg_recipes", "Category:Recipes"):
         cmcontinue = None
         for _ in range(9):
             u = f"https://en.wikibooks.org/w/api.php?action=query&list=categorymembers&cmtitle={urllib.parse.quote(cat_name)}&cmlimit=500&cmnamespace=102&format=json"
@@ -698,6 +767,8 @@ def fetch_wikibooks_real(needed_counts: dict[str, int]) -> list[dict]:
             for m in mems:
                 if cat_name == "Category:Breakfast_recipes":
                     bf_cat_titles.add(m["title"])
+                if cat_name == "Category:United_States_recipes":
+                    us_cat_titles.add(m["title"])
                 if m["title"] not in titles:
                     titles.append(m["title"])
             cmcontinue = d.get("continue", {}).get("cmcontinue")
@@ -705,14 +776,14 @@ def fetch_wikibooks_real(needed_counts: dict[str, int]) -> list[dict]:
                 break
             time.sleep(0.8)
 
-    # Filter healthy titles and prioritize Breakfast, Snack, Lunch keywords first
+    # Filter healthy titles and prioritize Breakfast, American, Turkey, Snack, Lunch keywords first
     healthy_titles = [t for t in titles if is_healthy_title(t.replace("Cookbook:", ""))]
 
     def priority_key(t: str):
         low = t.lower()
-        if t in bf_cat_titles or any(w in low for w in ("omelet", "omelette", "oat", "porridge", "yogurt", "smoothie", "pancake", "waffle", "toast", "frittata", "breakfast", "egg", "muesli", "granola", "shakshuka", "quiche", "crepe", "parfait", "grits", "muffin", "scramble", "poached", "chia", "blini", "syrniki")):
+        if t in bf_cat_titles or t in us_cat_titles or any(w in low for w in ("omelet", "omelette", "oat", "porridge", "yogurt", "smoothie", "pancake", "waffle", "toast", "frittata", "breakfast", "egg", "muesli", "granola", "shakshuka", "quiche", "crepe", "parfait", "grits", "muffin", "scramble", "poached", "chia", "blini", "syrniki")):
             return (0, low)
-        if any(w in low for w in ("turkey", "hummus", "dip", "guacamole", "nut", "almond", "walnut", "seed", "apple", "pear", "berry", "edamame", "cheese", "snack", "salsa")):
+        if any(w in low for w in ("chicken", "turkey", "salmon", "hummus", "dip", "guacamole", "nut", "almond", "walnut", "seed", "apple", "pear", "berry", "edamame", "cheese", "snack", "salsa")):
             return (1, low)
         if any(w in low for w in ("salad", "soup", "sandwich", "wrap", "burrito", "bowl", "lentil", "chickpea", "quinoa")):
             return (2, low)
@@ -740,7 +811,9 @@ def fetch_wikibooks_real(needed_counts: dict[str, int]) -> list[dict]:
                 if not revs:
                     continue
                 wt = revs[0].get("slots", {}).get("main", {}).get("*", "")
-                parsed = parse_wikibooks_wikitext(p["title"], wt, p["title"] in bf_cat_titles)
+                parsed = parse_wikibooks_wikitext(
+                    p["title"], wt, p["title"] in bf_cat_titles, p["title"] in us_cat_titles
+                )
                 if not parsed or parsed["id"] in seen_ids:
                     continue
                 cat = parsed["mealCategory"]
@@ -768,9 +841,9 @@ def main():
 
     needed = {
         "breakfast": max(0, 240 - tmdb_counts["breakfast"]),
-        "lunch": max(0, 220 - tmdb_counts["lunch"]),
-        "dinner": max(0, 220 - tmdb_counts["dinner"]),
-        "snack": max(0, 120 - tmdb_counts["snack"]),
+        "lunch": max(60, 250 - tmdb_counts["lunch"]),
+        "dinner": max(80, 275 - tmdb_counts["dinner"]),
+        "snack": max(0, 125 - tmdb_counts["snack"]),
     }
     print("2. Fetching Wikibooks Cookbook (CC BY-SA 4.0) to fill:", needed)
     wb = fetch_wikibooks_real(needed)

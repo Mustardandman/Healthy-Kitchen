@@ -117,6 +117,12 @@ export function seedDatabase(reset = true): {
 
   const baseDate = new Date("2026-11-18T12:00:00Z").getTime();
   const seenSlugs = new Set<string>();
+  const featuredByCat: Record<string, number> = {
+    breakfast: 0,
+    lunch: 0,
+    dinner: 0,
+    snack: 0,
+  };
 
   const runSeedTx = db.transaction(() => {
     for (const ref of Object.values(USDA_INGREDIENTS)) {
@@ -157,9 +163,20 @@ export function seedDatabase(reset = true): {
       }
       seenSlugs.add(slug);
 
-      const isFeatured =
-        index < 12 && safety.status === "reviewed_safe" ? 1 : 0;
-      const popularity = Math.max(40, 98 - (index % 50));
+      const isAmerican = bp.cuisine === "American";
+      const isEnglishFamiliar = ["Canadian", "British", "Australian", "Irish"].includes(bp.cuisine);
+      let isFeatured = 0;
+      if (isAmerican && safety.status === "reviewed_safe" && (featuredByCat[bp.mealCategory] ?? 0) < 4) {
+        isFeatured = 1;
+        featuredByCat[bp.mealCategory] = (featuredByCat[bp.mealCategory] ?? 0) + 1;
+      }
+      const popularity = isAmerican
+        ? Math.max(85, 99 - (index % 15))
+        : isEnglishFamiliar
+          ? Math.max(75, 86 - (index % 12))
+          : bp.cuisine === "International"
+            ? Math.max(60, 74 - (index % 15))
+            : Math.max(45, 64 - (index % 20));
       const createdAt = new Date(baseDate - index * 3600 * 1000).toISOString();
 
       insertRecipe.run(

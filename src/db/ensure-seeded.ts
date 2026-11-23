@@ -10,8 +10,11 @@ export function ensureSeeded(): void {
   const legacy = db
     .prepare(`SELECT COUNT(*) as c FROM recipes WHERE id NOT LIKE 'real-%'`)
     .get() as { c: number };
-  if (row.c === 0 || legacy.c > 0) {
-    seedDatabase(legacy.c > 0);
+  const american = db
+    .prepare(`SELECT COUNT(*) as c FROM recipes WHERE cuisine = 'American'`)
+    .get() as { c: number };
+  if (row.c === 0 || legacy.c > 0 || american.c < 20) {
+    seedDatabase(row.c > 0);
   }
   checked = true;
 }

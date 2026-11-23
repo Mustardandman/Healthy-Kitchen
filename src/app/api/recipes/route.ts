@@ -3,6 +3,7 @@ import { ensureSeeded } from "@/db/ensure-seeded";
 import { searchRecipes } from "@/db/queries";
 import {
   getExternalProviderStatus,
+  prioritizeAmericanRecipes,
   searchEdamamRecipes,
   searchFatSecretRecipes,
   searchSpoonacularRecipes,
@@ -24,6 +25,8 @@ export async function GET(request: NextRequest) {
     const maxCarbs = searchParams.get("maxCarbs") ? Number(searchParams.get("maxCarbs")) : undefined;
     const minFiber = searchParams.get("minFiber") ? Number(searchParams.get("minFiber")) : undefined;
     const maxCalories = searchParams.get("maxCalories") ? Number(searchParams.get("maxCalories")) : undefined;
+    const cuisine = searchParams.get("cuisine") ?? undefined;
+    const sort = (searchParams.get("sort") as RecipeSortOption) ?? "relevant";
     const page = searchParams.get("page") ? Number(searchParams.get("page")) : 1;
 
     const data = searchRecipes({
@@ -50,8 +53,8 @@ export async function GET(request: NextRequest) {
       safetyStatus: (searchParams.get("safetyStatus") as PregnancySafetyStatus | "") ?? undefined,
       classification: searchParams.get("classification") ?? undefined,
       difficulty: (searchParams.get("difficulty") as Difficulty | "") ?? undefined,
-      cuisine: searchParams.get("cuisine") ?? undefined,
-      sort: (searchParams.get("sort") as RecipeSortOption) ?? "relevant",
+      cuisine,
+      sort,
       page,
       pageSize: searchParams.get("pageSize") ? Number(searchParams.get("pageSize")) : 24,
     });
@@ -62,7 +65,7 @@ export async function GET(request: NextRequest) {
       const effectiveQuery = q || subcategory || "";
       const [edamamHits, fatsecretHits, spoonHits, tmdbHits] = await Promise.all([
         providers.edamamConfigured
-          ? searchEdamamRecipes({ query: effectiveQuery, category, limit: 8 })
+          ? searchEdamamRecipes({ query: effectiveQuery, category, cuisine, limit: 8 })
           : Promise.resolve([]),
         providers.fatsecretConfigured && effectiveQuery
           ? searchFatSecretRecipes({ query: effectiveQuery, category })
@@ -84,10 +87,17 @@ export async function GET(request: NextRequest) {
           : Promise.resolve([]),
       ]);
 
-      const externalHits = [...edamamHits, ...fatsecretHits, ...spoonHits, ...tmdbHits];
+      const filteredTmdb = cuisine
+        ? tmdbHits.filter((r) => r.cuisine.toLowerCase() === cuisine.toLowerCase())
+        : tmdbHits;
+      const externalHits = [...edamamHits, ...fatsecretHits, ...spoonHits, ...filteredTmdb];
       const seen = new Set(externalHits.map((r) => r.id));
       const dedupedLocal = data.items.filter((r) => !seen.has(r.id));
-      const combined = [...externalHits, ...dedupedLocal];
+      const merged = [...externalHits, ...dedupedLocal];
+      const combined =
+        (!cuisine || cuisine.toLowerCase() === "american") && sort === "relevant"
+          ? prioritizeAmericanRecipes(merged)
+          : merged;
 
       return NextResponse.json({
         ...data,

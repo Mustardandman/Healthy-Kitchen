@@ -163,10 +163,31 @@ export function getSubcategoryCounts(category: MealCategory): Record<string, num
   return result;
 }
 
+function americanPrioritySql(alias = ""): string {
+  const col = alias ? `${alias}.cuisine` : "cuisine";
+  return `CASE
+    WHEN ${col} = 'American' THEN 0
+    WHEN ${col} IN ('Canadian', 'British', 'Australian', 'Irish') THEN 1
+    WHEN ${col} = 'International' THEN 2
+    ELSE 3
+  END ASC`;
+}
+
+function getCuisineRank(cuisine: string): number {
+  const low = cuisine.trim().toLowerCase();
+  if (low === "american" || low === "united states") return 0;
+  if (["canadian", "british", "australian", "irish"].includes(low)) return 1;
+  if (low === "international") return 2;
+  return 3;
+}
+
 export function getAvailableCuisines(): string[] {
   const db = getDb();
   const rows = db
-    .prepare(`SELECT DISTINCT cuisine FROM recipes ORDER BY cuisine ASC`)
+    .prepare(
+      `SELECT DISTINCT cuisine FROM recipes
+       ORDER BY CASE WHEN cuisine = 'American' THEN 0 WHEN cuisine = 'International' THEN 2 ELSE 1 END ASC, cuisine ASC`
+    )
     .all() as Array<{ cuisine: string }>;
   return rows.map((r) => r.cuisine);
 }
@@ -287,26 +308,32 @@ export function searchRecipes(params: RecipeFilterParams): {
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-  let orderBy = `r.is_featured DESC, r.popularity_score DESC, r.name ASC`;
+  const americanOrder = americanPrioritySql("r");
+  const titleMatchExpr = params.q?.trim()
+    ? `CASE WHEN LOWER(r.name) LIKE ? THEN 0 ELSE 1 END ASC`
+    : null;
+  const titleOrderPrefix = titleMatchExpr ? `${titleMatchExpr}, ` : "";
+
+  let orderBy = `${americanOrder}, ${titleOrderPrefix}r.is_featured DESC, r.popularity_score DESC, r.name ASC`;
   switch (params.sort) {
     case "protein_desc":
-      orderBy = `r.nutrition_protein_g DESC, r.popularity_score DESC`;
+      orderBy = `r.nutrition_protein_g DESC, ${americanOrder}, r.popularity_score DESC`;
       break;
     case "fiber_desc":
-      orderBy = `r.nutrition_fiber_g DESC, r.popularity_score DESC`;
+      orderBy = `r.nutrition_fiber_g DESC, ${americanOrder}, r.popularity_score DESC`;
       break;
     case "added_sugar_asc":
-      orderBy = `COALESCE(r.nutrition_added_sugar_g, 0) ASC, r.nutrition_sugar_g ASC`;
+      orderBy = `COALESCE(r.nutrition_added_sugar_g, 0) ASC, r.nutrition_sugar_g ASC, ${americanOrder}`;
       break;
     case "time_asc":
-      orderBy = `r.total_time_min ASC, r.popularity_score DESC`;
+      orderBy = `r.total_time_min ASC, ${americanOrder}, r.popularity_score DESC`;
       break;
     case "recent":
-      orderBy = `r.created_at DESC, r.id DESC`;
+      orderBy = `${americanOrder}, r.created_at DESC, r.id DESC`;
       break;
     case "relevant":
     default:
-      orderBy = `r.is_featured DESC, r.popularity_score DESC, r.id ASC`;
+      orderBy = `${americanOrder}, ${titleOrderPrefix}r.is_featured DESC, r.popularity_score DESC, r.id ASC`;
       break;
   }
 
@@ -314,9 +341,13 @@ export function searchRecipes(params: RecipeFilterParams): {
     .prepare(`SELECT COUNT(*) as total FROM recipes r ${whereSql}`)
     .get(...sqlParams) as { total: number };
 
+  const orderParams = titleMatchExpr && (!params.sort || params.sort === "relevant")
+    ? [`%${params.q!.trim().toLowerCase()}%`]
+    : [];
+
   const rows = db
     .prepare(`SELECT r.* FROM recipes r ${whereSql} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
-    .all(...sqlParams, pageSize, offset) as RecipeRow[];
+    .all(...sqlParams, ...orderParams, pageSize, offset) as RecipeRow[];
 
   const total = countRow.total;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -343,31 +374,32 @@ export function getHomepageSections(): {
   const db = getDb();
 
   const queryRows = (sql: string) => db.prepare(sql).all() as RecipeRow[];
+  const amOrder = americanPrioritySql();
 
   return {
     featured: hydrateCardItems(
-      queryRows(`SELECT * FROM recipes WHERE is_featured = 1 ORDER BY popularity_score DESC LIMIT 8`)
+      queryRows(`SELECT * FROM recipes ORDER BY ${amOrder}, is_featured DESC, popularity_score DESC LIMIT 8`)
     ),
     popularBreakfast: hydrateCardItems(
-      queryRows(`SELECT * FROM recipes WHERE meal_category = 'breakfast' ORDER BY popularity_score DESC LIMIT 8`)
+      queryRows(`SELECT * FROM recipes WHERE meal_category = 'breakfast' ORDER BY ${amOrder}, is_featured DESC, popularity_score DESC LIMIT 8`)
     ),
     quickLunches: hydrateCardItems(
-      queryRows(`SELECT * FROM recipes WHERE meal_category = 'lunch' AND total_time_min <= 20 ORDER BY popularity_score DESC LIMIT 8`)
+      queryRows(`SELECT * FROM recipes WHERE meal_category = 'lunch' AND total_time_min <= 20 ORDER BY ${amOrder}, popularity_score DESC LIMIT 8`)
     ),
     healthyDinners: hydrateCardItems(
-      queryRows(`SELECT * FROM recipes WHERE meal_category = 'dinner' ORDER BY popularity_score DESC LIMIT 8`)
+      queryRows(`SELECT * FROM recipes WHERE meal_category = 'dinner' ORDER BY ${amOrder}, is_featured DESC, popularity_score DESC LIMIT 8`)
     ),
     pregnancyFriendly: hydrateCardItems(
-      queryRows(`SELECT * FROM recipes WHERE pregnancy_safety_status = 'reviewed_safe' ORDER BY nutrition_folate_mcg DESC, popularity_score DESC LIMIT 8`)
+      queryRows(`SELECT * FROM recipes WHERE pregnancy_safety_status = 'reviewed_safe' ORDER BY ${amOrder}, nutrition_folate_mcg DESC, popularity_score DESC LIMIT 8`)
     ),
     highProtein: hydrateCardItems(
-      queryRows(`SELECT * FROM recipes WHERE nutrition_protein_g >= 24 ORDER BY nutrition_protein_g DESC, popularity_score DESC LIMIT 8`)
+      queryRows(`SELECT * FROM recipes WHERE nutrition_protein_g >= 24 ORDER BY ${amOrder}, nutrition_protein_g DESC, popularity_score DESC LIMIT 8`)
     ),
     readyIn30: hydrateCardItems(
-      queryRows(`SELECT * FROM recipes WHERE total_time_min <= 30 AND meal_category IN ('lunch', 'dinner') ORDER BY popularity_score DESC LIMIT 8`)
+      queryRows(`SELECT * FROM recipes WHERE total_time_min <= 30 AND meal_category IN ('lunch', 'dinner') ORDER BY ${amOrder}, popularity_score DESC LIMIT 8`)
     ),
     recentlyAdded: hydrateCardItems(
-      queryRows(`SELECT * FROM recipes ORDER BY created_at DESC, id DESC LIMIT 8`)
+      queryRows(`SELECT * FROM recipes ORDER BY ${amOrder}, created_at DESC, id DESC LIMIT 8`)
     ),
   };
 }
@@ -530,7 +562,7 @@ export function matchRecipesByFridgeIngredients(params: {
 
   const allRecipeIngs = db
     .prepare(
-      `SELECT ri.recipe_id, ri.ingredient_id, ri.display_name, ic.canonical_name
+      `SELECT ri.recipe_id, ri.ingredient_id, ri.display_name, ic.canonical_name, r.cuisine
        FROM recipe_ingredients ri
        JOIN recipes r ON r.id = ri.recipe_id
        JOIN ingredients_catalog ic ON ic.id = ri.ingredient_id
@@ -541,14 +573,17 @@ export function matchRecipesByFridgeIngredients(params: {
     ingredient_id: string;
     display_name: string;
     canonical_name: string;
+    cuisine: string;
   }>;
 
   const recipeMap = new Map<
     string,
     Array<{ ingredientId: string; displayName: string; canonicalName: string }>
   >();
+  const cuisineMap = new Map<string, string>();
 
   for (const row of allRecipeIngs) {
+    cuisineMap.set(row.recipe_id, row.cuisine);
     const list = recipeMap.get(row.recipe_id) ?? [];
     list.push({
       ingredientId: row.ingredient_id,
@@ -566,6 +601,7 @@ export function matchRecipesByFridgeIngredients(params: {
     totalIngredientsCount: number;
     matchPercentage: number;
     allSelectedMatched: boolean;
+    cuisineRank: number;
   }
 
   const candidates: CandidateScore[] = [];
@@ -625,6 +661,7 @@ export function matchRecipesByFridgeIngredients(params: {
       totalIngredientsCount: totalCount,
       matchPercentage,
       allSelectedMatched,
+      cuisineRank: getCuisineRank(cuisineMap.get(recipeId) ?? "International"),
     });
   }
 
@@ -642,6 +679,9 @@ export function matchRecipesByFridgeIngredients(params: {
     }
     if (b.matchPercentage !== a.matchPercentage) {
       return b.matchPercentage - a.matchPercentage;
+    }
+    if (a.cuisineRank !== b.cuisineRank) {
+      return a.cuisineRank - b.cuisineRank;
     }
     return b.matchedCount - a.matchedCount;
   });

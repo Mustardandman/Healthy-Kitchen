@@ -6,6 +6,7 @@ import {
   findSpoonacularByIngredients,
   findTheMealDbByIngredients,
   getExternalProviderStatus,
+  prioritizeAmericanRecipes,
 } from "@/lib/providers/external-apis";
 import type { FridgeMatchMode, MealCategory } from "@/types/recipe";
 
@@ -34,10 +35,10 @@ export async function POST(request: NextRequest) {
       const [edamamMatches, spoonMatches, tmdbMatches] = await Promise.all([
         providers.edamamConfigured
           ? findEdamamByIngredients({
-              ingredients,
-              category: body.category ?? "",
-              limit: 8,
-            })
+            ingredients,
+            category: body.category ?? "",
+            limit: 8,
+          })
           : Promise.resolve([]),
         providers.spoonacularConfigured
           ? findSpoonacularByIngredients(ingredients, 6)
@@ -47,7 +48,11 @@ export async function POST(request: NextRequest) {
           : Promise.resolve([]),
       ]);
 
-      const externalMatches = [...edamamMatches, ...spoonMatches, ...tmdbMatches];
+      const externalMatches = prioritizeAmericanRecipes([
+        ...edamamMatches,
+        ...spoonMatches,
+        ...tmdbMatches,
+      ]);
       if (externalMatches.length > 0) {
         return NextResponse.json({
           ...localResult,

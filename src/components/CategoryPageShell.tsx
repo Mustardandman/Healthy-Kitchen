@@ -7,6 +7,7 @@ import {
 } from "@/db/queries";
 import {
   getExternalProviderStatus,
+  prioritizeAmericanRecipes,
   searchEdamamRecipes,
   searchTheMealDbRecipes,
 } from "@/lib/providers/external-apis";
@@ -46,7 +47,12 @@ export async function CategoryPageShell({
       : Promise.resolve([]),
   ]);
 
-  const combinedInitial = [...edamamLive, ...tmdbLive, ...initialData.items].slice(0, 24);
+  const seenLive = new Set([...edamamLive, ...tmdbLive].map((r) => r.id));
+  const combinedInitial = prioritizeAmericanRecipes([
+    ...edamamLive,
+    ...tmdbLive,
+    ...initialData.items.filter((r) => !seenLive.has(r.id)),
+  ]).slice(0, 24);
   const subcategoryCounts = getSubcategoryCounts(category);
   const cuisines = getAvailableCuisines();
   const favoriteIds = getFavoriteIds();
