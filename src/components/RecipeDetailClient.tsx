@@ -134,11 +134,10 @@ export function RecipeDetailClient({ recipe }: RecipeDetailClientProps) {
               {recipe.classifications[0] ?? "Balanced Nutrition"}
             </span>
             <span
-              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${
-                safetyMeta.tone === "safe"
+              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${safetyMeta.tone === "safe"
                   ? "bg-[#F7F8F7] text-[#3D5441]"
                   : "bg-amber-50 text-amber-800"
-              }`}
+                }`}
             >
               {safetyMeta.tone === "safe" ? (
                 <ShieldCheck className="h-3.5 w-3.5 text-[#78947C]" />
@@ -180,11 +179,10 @@ export function RecipeDetailClient({ recipe }: RecipeDetailClientProps) {
               <button
                 type="button"
                 onClick={handleToggleFavorite}
-                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition ${
-                  isFavorited
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition ${isFavorited
                     ? "bg-[#78947C] text-white"
                     : "border border-[#DCE2DC] bg-white text-[#292D2A] hover:border-[#78947C]"
-                }`}
+                  }`}
               >
                 <Heart className={`h-4 w-4 ${isFavorited ? "fill-current" : ""}`} />
                 <span>{isFavorited ? "Saved" : "Save Recipe"}</span>
@@ -276,9 +274,8 @@ export function RecipeDetailClient({ recipe }: RecipeDetailClientProps) {
                         className="mt-1 h-4 w-4 accent-[#78947C]"
                       />
                       <span
-                        className={`text-sm ${
-                          checked ? "text-[#777F78] line-through" : "text-[#292D2A]"
-                        }`}
+                        className={`text-sm ${checked ? "text-[#777F78] line-through" : "text-[#292D2A]"
+                          }`}
                       >
                         <strong className="font-semibold">
                           {formatQuantity(scaledQty)} {ing.unit}
@@ -405,29 +402,22 @@ export function RecipeDetailClient({ recipe }: RecipeDetailClientProps) {
                 </ol>
 
                 {recipe.instructions.length > 2 && (
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#F0F2F0] pt-4">
-                    <span className="text-xs text-[#777F78]">
-                      {instructionsExpanded
-                        ? `Showing all ${recipe.instructions.length} steps`
-                        : `Showing first 2 of ${recipe.instructions.length} steps`}
-                    </span>
+                  <div className="mt-5 flex justify-center border-t border-[#F0F2F0] pt-3">
                     <button
                       type="button"
                       onClick={() => setInstructionsExpanded((prev) => !prev)}
                       aria-expanded={instructionsExpanded}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[#DCE2DC] bg-[#F7F8F7] px-4 py-2 text-xs font-semibold text-[#292D2A] transition hover:border-[#78947C] hover:bg-[#E7EFE7]"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[#F7F8F7]/55 px-4 py-1.5 text-xs font-medium text-[#575E58]/85 backdrop-blur-sm transition hover:bg-[#E7EFE7]/60 hover:text-[#292D2A]"
                     >
                       {instructionsExpanded ? (
                         <>
-                          <span>Show Less</span>
-                          <ChevronUp className="h-4 w-4 text-[#557059]" />
+                          <span>Show less</span>
+                          <ChevronUp className="h-3.5 w-3.5" />
                         </>
                       ) : (
                         <>
-                          <span>
-                            Show Full Instructions ({recipe.instructions.length} steps)
-                          </span>
-                          <ChevronDown className="h-4 w-4 text-[#557059]" />
+                          <span>Show more</span>
+                          <ChevronDown className="h-3.5 w-3.5" />
                         </>
                       )}
                     </button>
