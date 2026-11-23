@@ -10,7 +10,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT_PATH = ROOT / "src" / "data" / "real-recipes.json"
-IMAGE_MAP_PATH = ROOT / "src" / "data" / "recipe-image-map.json"
 
 WB_HEADERS = {
     "User-Agent": "NourishRecipePlatform/1.0 (https://github.com/Mustardandman/Healthy-Kitchen; contact@example.com)"
@@ -33,8 +32,36 @@ EXCLUDE_WORDS = {
     "fried chicken", "deep-fried", "deep fried", "sugar cookies", "shortbread",
 }
 
-# Map keywords in ingredient line -> canonical USDA_INGREDIENTS key
+EXCLUDE_PATTERNS = [
+    r"\b(?:cake|cupcake|brownie|cookie|biscuit|fudge|candy|chocolate|ice cream|sorbet|gelato|frosting|icing|meringue|donut|doughnut|pastry|pie|tart|cheesecake|pudding|flan|caramel|toffee|marshmallow|marshmallows|shortbread|funnel cake|beignet|churro|sweet bread|buns)\b",
+    r"\b(?:cocktail|martini|mojito|margarita|sangria|beer|ale|stout|vodka|rum|whiskey|bourbon|brandy|cognac|sherry|port|gin|tequila|liqueur|punch|eggnog|champagne|cider|sake|mirin|marsala|vermouth)\b",
+    r"(?<!vinegar\s)\b(?:red wine|white wine|wine)\b(?!\s+vinegar)",
+    r"\b(?:bacon|sausage|hot dog|hot dogs|bologna|baloney|salami|prosciutto|pepperoni|pastrami|spam|corned beef|chipped beef|dried beef|deli meat|cold cut|cold cuts|luncheon meat|pancetta|pork belly|ham|chorizo|liver|tripe|lard|shortening)\b",
+    r"\b(?:swordfish|shark|marlin|king mackerel|tilefish|bigeye|raw egg|raw oyster|raw oysters|tartare|ceviche|sashimi|sushi|carpaccio|smoked salmon|lox|alfalfa sprouts|raw sprouts|unpasteurized|queso fresco|brie|camembert|roquefort|blue cheese|gorgonzola)\b",
+    r"\b(?:deep[- ]fry(?:ing|ed)?|deep[- ]fat|fried chicken|fritters|wing|wings|croquetas|halwa|crisp|cobbler|heavy cream|whipping cream|condensed milk|corn syrup|powdered sugar|confectioners|cool whip|alfredo|poutine|soda pop|soft drink|club soda|cola|ancient roman|dog treat|playdough|pet food|baby food|dye|brine|marinade|seasoning mix|spice blend|garam masala|curry powder|salad dressing|vinaigrette|mayonnaise|ketchup|gravy|marmalade|compote|chutney|pickled|pickle|kimchi|sauerkraut|bread machine|sourdough starter|fondant|ganache|praline|macaron|eclair|egg wash)\b",
+    r"(?<!baking )(?<!of )\bsoda\b",
+]
+EXCLUDE_RE = re.compile("|".join(EXCLUDE_PATTERNS), re.I)
+
+# Map keywords in ingredient line -> canonical USDA_INGREDIENTS key (broths & seasonings FIRST!)
 ING_KEYWORD_MAP = [
+    ("chicken broth", "chicken_broth"),
+    ("chicken stock", "chicken_broth"),
+    ("beef broth", "chicken_broth"),
+    ("beef stock", "chicken_broth"),
+    ("vegetable broth", "chicken_broth"),
+    ("vegetable stock", "chicken_broth"),
+    ("broth", "chicken_broth"),
+    ("stock", "chicken_broth"),
+    ("black pepper", "seasoning_basic"),
+    ("white pepper", "seasoning_basic"),
+    ("pepper to taste", "seasoning_basic"),
+    ("ground pepper", "seasoning_basic"),
+    ("cayenne", "seasoning_basic"),
+    ("chili powder", "seasoning_basic"),
+    ("peppercorn", "seasoning_basic"),
+    ("chile", "seasoning_basic"),
+    ("chilli", "seasoning_basic"),
     ("chicken breast", "chicken_breast"),
     ("chicken thigh", "chicken_thigh"),
     ("chicken", "chicken_breast"),
@@ -43,6 +70,7 @@ ING_KEYWORD_MAP = [
     ("ground beef", "lean_ground_beef"),
     ("sirloin", "beef_sirloin"),
     ("steak", "beef_sirloin"),
+    ("lamb", "beef_sirloin"),
     ("beef", "lean_ground_beef"),
     ("pork tenderloin", "pork_tenderloin"),
     ("pork", "pork_tenderloin"),
@@ -55,6 +83,8 @@ ING_KEYWORD_MAP = [
     ("shrimp", "shrimp"),
     ("prawn", "shrimp"),
     ("tuna", "canned_light_tuna"),
+    ("eggplant", "eggplant"),
+    ("aubergine", "eggplant"),
     ("egg white", "egg_whites"),
     ("egg", "egg_whole"),
     ("tofu", "firm_tofu"),
@@ -189,7 +219,14 @@ ING_KEYWORD_MAP = [
     ("paprika", "cinnamon_spices"),
     ("ginger", "cinnamon_spices"),
     ("turmeric", "cinnamon_spices"),
-    ("salt", "cinnamon_spices"),
+    ("salt", "seasoning_basic"),
+    ("black pepper", "seasoning_basic"),
+    ("white pepper", "seasoning_basic"),
+    ("peppercorn", "seasoning_basic"),
+    ("water", "seasoning_basic"),
+    ("vinegar", "seasoning_basic"),
+    ("baking powder", "seasoning_basic"),
+    ("baking soda", "seasoning_basic"),
 ]
 
 
@@ -198,7 +235,7 @@ def map_ingredient_id(text: str) -> str:
     for kw, ing_id in ING_KEYWORD_MAP:
         if kw in low:
             return ing_id
-    return "fresh_herbs" if "herb" in low else "cinnamon_spices"
+    return "fresh_herbs" if "herb" in low else "seasoning_basic"
 
 
 FRAC_MAP = {"½": 0.5, "⅓": 0.33, "⅔": 0.67, "¼": 0.25, "¾": 0.75, "⅛": 0.125}
@@ -209,6 +246,13 @@ def parse_qty_unit(measure_str: str, fallback_text: str = "") -> tuple[float, st
     for sym, val in FRAC_MAP.items():
         s = s.replace(sym, f" {val} ")
     m = re.match(r"^\s*(\d+(?:\.\d+)?(?:\s*/\s*\d+)?)\s*([a-zA-Z]+)?", s)
+    if not m:
+        low = s.lower()
+        if any(w in low for w in ("oil", "butter", "vinegar", "honey", "syrup", "sauce")):
+            return 1.0, "tbsp"
+        if any(w in low for w in ("salt", "pepper", "spice", "herb", "cinnamon", "garlic")):
+            return 0.5, "tsp"
+        return 1.0, "piece"
     qty = 1.0
     unit = "piece"
     if m:
@@ -233,13 +277,17 @@ def parse_qty_unit(measure_str: str, fallback_text: str = "") -> tuple[float, st
                 "ounce": "oz", "ounces": "oz", "oz": "oz",
                 "pound": "lb", "pounds": "lb", "lb": "lb", "lbs": "lb",
                 "gram": "g", "grams": "g", "g": "g",
+                "milliliter": "ml", "milliliters": "ml", "ml": "ml",
+                "liter": "l", "liters": "l", "l": "l",
                 "clove": "clove", "cloves": "clove",
                 "slice": "slice", "slices": "slice",
                 "can": "can", "cans": "can",
                 "bunch": "bunch", "sprig": "sprig", "sprigs": "sprig",
+                "pinch": "pinch", "dash": "dash", "handful": "handful",
             }.get(u, u)
             unit = unit_norm
-    qty = max(0.25, min(20.0, round(qty, 2)))
+    max_cap = 2000.0 if unit in ("g", "ml") else 20.0
+    qty = max(0.25, min(max_cap, round(qty, 2)))
     return qty, unit
 
 
@@ -262,10 +310,34 @@ def fetch_json(url: str, headers: dict | None = None) -> dict:
 
 def is_healthy_title(title: str) -> bool:
     low = title.lower()
-    if any(bad in low for bad in EXCLUDE_WORDS):
+    if EXCLUDE_RE.search(low):
         return False
-    if len(low) < 4 or ":" in title and title.startswith("Cookbook:Category"):
+    if re.search(r"\b(?:sauce|dressing|dipping|glaze|rub|paste)\b$", low):
         return False
+    if len(low) < 4 or (":" in title and title.startswith("Cookbook:Category")):
+        return False
+    return True
+
+
+PROC_UNSAFE_RE = re.compile(
+    r"\b(?:unpasteurized|raw egg|raw eggs|runny yolk|vodka|rum|whiskey|beer|bourbon|brandy|cognac|liqueur|tequila|salami|blue cheese|deep[- ]fry(?:ing|ed)?|deep[- ]fat)\b|(?<!vinegar )\b(?:red wine|white wine|wine)\b(?! vinegar)",
+    re.I,
+)
+
+
+def is_pregnancy_and_diabetes_friendly(title: str, ing_lines: list[str], instructions_text: str) -> bool:
+    blob = " ".join([title, *ing_lines])
+    if EXCLUDE_RE.search(blob):
+        return False
+    if PROC_UNSAFE_RE.search(instructions_text):
+        return False
+    # Exclude recipes centered around refined sugar
+    sugar_lines = [l for l in ing_lines if re.search(r"\b(?:white sugar|granulated sugar|cane sugar|brown sugar|caster sugar|sugar)\b", l, re.I)]
+    if sugar_lines:
+        for sl in sugar_lines:
+            qty, unit = parse_qty_unit(sl)
+            if unit in ("cup", "lb") or (unit == "tbsp" and qty > 2) or (unit == "tsp" and qty > 6) or (unit == "g" and qty > 25):
+                return False
     return True
 
 
@@ -273,10 +345,20 @@ def classify_meal_and_subs(title: str, raw_cat: str, ing_ids: list[str], instruc
     low = f"{title} {raw_cat} {instructions[:200]}".lower()
     ings = set(ing_ids)
 
-    # Breakfast detection
-    if raw_cat.lower() == "breakfast" or any(
-        w in low for w in ("omelet", "omelette", "frittata", "pancake", "waffle", "oatmeal", "overnight oats", "porridge", "granola", "muesli", "smoothie", "shakshuka", "huevos", "scrambled egg", "poached egg", "breakfast", "french toast", "avocado toast", "quiche", "strata", "crepe", "grits", "hash brown", "parfait", "egg muffin", "breakfast muffin")
-    ):
+    # Breakfast detection (match egg/toast/oats/yogurt/smoothie dishes, excluding dinner mains like eggplant/noodles/curry)
+    title_low = title.lower()
+    is_bf_title = (
+        raw_cat.lower() == "breakfast"
+        or "breakfast" in title_low
+        or (
+            not any(x in title_low for x in ("eggplant", "noodle", "egg roll", "egg drop", "curry", "shawarma", "lamb", "salad", "pizza", "burger", "soup", "stew", "shrimp", "pasta", "roast", "steak", "chili"))
+            and (
+                re.search(r"\b(?:egg|eggs|omelet|omelette|frittata|pancake|pancakes|waffle|waffles|oatmeal|oat|oats|porridge|granola|muesli|smoothie|shakshuka|huevos|toast|quiche|strata|crepe|crepes|grits|congee|parfait|muffin|muffins|scramble|scrambled|poached|chilaquiles|migas|menemen|cilbir|tamagoyaki|syrniki|blini|dosa|idli|upma|poha|chia|yogurt|yoghurt|kefir|cornmeal|polenta|arepa|bran)\b", title_low)
+                is not None
+            )
+        )
+    )
+    if is_bf_title:
         subs = []
         if any(w in low for w in ("egg", "omelet", "omelette", "frittata", "shakshuka", "huevos")) or "egg_whole" in ings:
             subs.append("Eggs and Omelets")
@@ -302,7 +384,7 @@ def classify_meal_and_subs(title: str, raw_cat: str, ing_ids: list[str], instruc
     # Snack detection
     if raw_cat.lower() in ("starter", "snack", "appetizer") or any(
         w in low for w in ("hummus", "dip", "guacamole", "salsa", "trail mix", "energy ball", "energy bite", "edamame", "cottage cheese", "roasted chickpea", "yogurt parfait", "apple slice", "snack", "bruschetta", "stuffed mushroom", "deviled egg", "almond", "walnut", "seed")
-    ) and not any(w in low for w in ("roast", "stew", "casserole", "curry", "lasagna", "steak", "pasta", "soup", "chili")):
+    ) and not any(w in low for w in ("roast", "stew", "casserole", "curry", "lasagna", "steak", "pasta", "soup", "chili", "biryani", "lamb")):
         subs = []
         if "yogurt" in low or "greek_yogurt_plain" in ings:
             subs.append("Greek Yogurt Snacks")
@@ -422,9 +504,21 @@ def fetch_themealdb_real() -> list[dict]:
             if len(ings) < 2:
                 continue
 
+            if not is_pregnancy_and_diabetes_friendly(
+                title, [x["displayName"] for x in ings], m.get("strInstructions") or ""
+            ):
+                continue
+
             meal_cat, primary_sub, subs = classify_meal_and_subs(
                 title, cat, [x["ingredientId"] for x in ings], m.get("strInstructions") or ""
             )
+
+            raw_inst = (m.get("strInstructions") or "").strip()
+            steps = []
+            for part in re.split(r"\r?\n+|(?<=\.)\s+(?=[A-Z])", raw_inst):
+                clean_p = re.sub(r"^(?:step\s*)?\d+[:.)\-]?\s*", "", part.strip(), flags=re.I)
+                if len(clean_p) >= 8:
+                    steps.append({"step": len(steps) + 1, "instruction": clean_p})
 
             host = parsed.netloc.replace("www.", "")
             recipes.append({
@@ -441,8 +535,8 @@ def fetch_themealdb_real() -> list[dict]:
                 "cookTimeMin": 20 if meal_cat in ("lunch", "dinner") else 10,
                 "servings": 4 if meal_cat == "dinner" else 2,
                 "ingredients": ings,
-                "instructions": [],
-                "instructionsLicenseMode": "link_only",
+                "instructions": steps[:14],
+                "instructionsLicenseMode": "licensed_display" if steps else "link_only",
                 "sourceName": host,
                 "sourceAttribution": f"Real recipe via TheMealDB • Original publisher: {host}",
                 "sourceUrl": src,
@@ -451,33 +545,45 @@ def fetch_themealdb_real() -> list[dict]:
     return recipes
 
 
-def parse_wikibooks_wikitext(title: str, wikitext: str) -> dict | None:
+def parse_wikibooks_wikitext(title: str, wikitext: str, is_breakfast_cat: bool = False) -> dict | None:
     if "#redirect" in wikitext.lower()[:40]:
         return None
     clean_name = title.replace("Cookbook:", "").strip()
     if not is_healthy_title(clean_name):
         return None
 
-    # Extract ingredients section
+    # Extract ingredients section (stop only at top-level == Heading ==, preserving === Subheadings ===)
     ing_match = re.search(
-        r"==+\s*Ingredients\s*==+(.*?)(?=\n==+[^=]|\Z)", wikitext, re.S | re.I
+        r"==+\s*Ingredients\s*==+(.*?)(?=\n==[^=]|\Z)", wikitext, re.S | re.I
     )
     if not ing_match:
         return None
 
     ing_lines_raw = [
-        line.strip(" *#•\t")
+        line.strip(" *#•-\t")
         for line in ing_match.group(1).splitlines()
-        if line.strip().startswith(("*", "#"))
+        if line.strip() and (
+            line.strip().startswith(("*", "#", "-", "•"))
+            or re.match(r"^\d", line.strip())
+        )
     ]
+    if len(ing_lines_raw) < 2:
+        ing_lines_raw = [
+            line.strip(" *#•-\t|")
+            for line in ing_match.group(1).splitlines()
+            if line.strip()
+            and not line.strip().startswith(("=", "{|", "|-", "|}", "!", "[[Category", "{{", "<"))
+        ]
     ings = []
     for raw in ing_lines_raw[:18]:
         # Strip MediaWiki markup [[Cookbook:Foo|foo]] or {{convert|...}}
-        cleaned = re.sub(r"\[\[Cookbook:[^|\]]+\|([^\]]+)\]\]", r"\1", raw)
+        cleaned = re.sub(r"<ref[^>]*>.*?</ref>|<[^>]+>", " ", raw)
+        cleaned = re.sub(r"\[\[Cookbook:[^|\]]+\|([^\]]+)\]\]", r"\1", cleaned)
         cleaned = re.sub(r"\[\[([^|\]]+\|)?([^\]]+)\]\]", r"\2", cleaned)
         cleaned = re.sub(r"\{\{convert\|([^|]+)\|([^|]+)\|[^}]+\}\}", r"\1 \2", cleaned)
         cleaned = re.sub(r"\{\{[^}]+\}\}", "", cleaned)
-        cleaned = re.sub(r"'{2,3}", "", cleaned).strip()
+        cleaned = re.sub(r"'{2,3}", "", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
         if len(cleaned) < 2:
             continue
         qty, unit = parse_qty_unit(cleaned)
@@ -493,7 +599,7 @@ def parse_wikibooks_wikitext(title: str, wikitext: str) -> dict | None:
 
     # Extract procedure/directions/instructions section
     proc_match = re.search(
-        r"==+\s*(?:Procedure|Directions|Instructions|Preparation|Method)\s*==+(.*?)(?=\n==+[^=]|\Z)",
+        r"==+\s*(?:Procedure|Directions|Instructions|Preparation|Method|Making|Cooking|Steps)\s*==+(.*?)(?=\n==[^=]|\Z)",
         wikitext,
         re.S | re.I,
     )
@@ -502,24 +608,37 @@ def parse_wikibooks_wikitext(title: str, wikitext: str) -> dict | None:
         raw_steps = [
             line.strip(" *#•\t")
             for line in proc_match.group(1).splitlines()
-            if line.strip() and not line.strip().startswith(("[[Category:", "{{", "|", "!"))
+            if line.strip() and not line.strip().startswith(("[[Category:", "{{", "|", "!", "="))
         ]
         for s in raw_steps:
-            sc = re.sub(r"\[\[Cookbook:[^|\]]+\|([^\]]+)\]\]", r"\1", s)
+            sc = re.sub(r"<ref[^>]*>.*?</ref>|<[^>]+>", " ", s)
+            sc = re.sub(r"\[\[Cookbook:[^|\]]+\|([^\]]+)\]\]", r"\1", sc)
             sc = re.sub(r"\[\[([^|\]]+\|)?([^\]]+)\]\]", r"\2", sc)
             sc = re.sub(r"\{\{[^}]+\}\}", "", sc)
-            sc = re.sub(r"'{2,3}", "", sc).strip()
+            sc = re.sub(r"'{2,3}", "", sc)
+            sc = re.sub(r"\s+", " ", sc).strip()
             if len(sc) >= 8:
                 steps.append({"step": len(steps) + 1, "instruction": sc})
 
     if len(steps) == 0:
         return None
 
+    if not is_pregnancy_and_diabetes_friendly(
+        clean_name,
+        [x["displayName"] for x in ings],
+        " ".join(s["instruction"] for s in steps),
+    ):
+        return None
+
     # Extract servings & time if available
     servings = 2
-    sm = re.search(r"(?:servings|yield)\s*=\s*(\d+)", wikitext, re.I)
+    sm = re.search(r"(?:servings|yield|serves|makes)\s*(?:=|:|of)?\s*(\d+)", wikitext, re.I)
     if sm:
-        servings = max(1, min(12, int(sm.group(1))))
+        servings = max(1, min(24, int(sm.group(1))))
+    # Batch pot heuristic if large multi-pound meat/rice quantities
+    total_lb = sum(x["quantity"] for x in ings if x["unit"] == "lb")
+    if total_lb >= 4 and servings < 6:
+        servings = max(servings, int(total_lb))
 
     total_time = 25
     tm = re.search(r"time\s*=\s*(\d+)", wikitext, re.I)
@@ -527,7 +646,7 @@ def parse_wikibooks_wikitext(title: str, wikitext: str) -> dict | None:
         total_time = max(5, min(240, int(tm.group(1))))
 
     raw_cat = ""
-    if any(w in wikitext.lower() for w in ("breakfast", "brunch")):
+    if is_breakfast_cat or any(w in wikitext.lower() for w in ("breakfast", "brunch")):
         raw_cat = "Breakfast"
     elif any(w in wikitext.lower() for w in ("snack", "appetizer", "dip")):
         raw_cat = "Snack"
@@ -565,29 +684,35 @@ def parse_wikibooks_wikitext(title: str, wikitext: str) -> dict | None:
 
 
 def fetch_wikibooks_real(needed_counts: dict[str, int]) -> list[dict]:
-    # Gather all Category:Recipes titles
+    # Gather Category:Breakfast_recipes + Category:Recipes titles
     titles = []
-    cmcontinue = None
-    for _ in range(9):
-        u = "https://en.wikibooks.org/w/api.php?action=query&list=categorymembers&cmtitle=Category:Recipes&cmlimit=500&cmnamespace=102&format=json"
-        if cmcontinue:
-            u += "&cmcontinue=" + urllib.parse.quote(cmcontinue)
-        d = fetch_json(u, WB_HEADERS)
-        mems = d.get("query", {}).get("categorymembers", [])
-        titles.extend([m["title"] for m in mems])
-        cmcontinue = d.get("continue", {}).get("cmcontinue")
-        if not cmcontinue:
-            break
-        time.sleep(0.8)
+    bf_cat_titles = set()
+    for cat_name in ("Category:Breakfast_recipes", "Category:Egg_recipes", "Category:Recipes"):
+        cmcontinue = None
+        for _ in range(9):
+            u = f"https://en.wikibooks.org/w/api.php?action=query&list=categorymembers&cmtitle={urllib.parse.quote(cat_name)}&cmlimit=500&cmnamespace=102&format=json"
+            if cmcontinue:
+                u += "&cmcontinue=" + urllib.parse.quote(cmcontinue)
+            d = fetch_json(u, WB_HEADERS)
+            mems = d.get("query", {}).get("categorymembers", [])
+            for m in mems:
+                if cat_name == "Category:Breakfast_recipes":
+                    bf_cat_titles.add(m["title"])
+                if m["title"] not in titles:
+                    titles.append(m["title"])
+            cmcontinue = d.get("continue", {}).get("cmcontinue")
+            if not cmcontinue:
+                break
+            time.sleep(0.8)
 
     # Filter healthy titles and prioritize Breakfast, Snack, Lunch keywords first
     healthy_titles = [t for t in titles if is_healthy_title(t.replace("Cookbook:", ""))]
 
     def priority_key(t: str):
         low = t.lower()
-        if any(w in low for w in ("omelet", "omelette", "oat", "porridge", "yogurt", "smoothie", "pancake", "waffle", "toast", "frittata", "breakfast", "egg", "muesli", "granola", "shakshuka", "quiche", "crepe", "parfait", "grits", "muffin")):
+        if t in bf_cat_titles or any(w in low for w in ("omelet", "omelette", "oat", "porridge", "yogurt", "smoothie", "pancake", "waffle", "toast", "frittata", "breakfast", "egg", "muesli", "granola", "shakshuka", "quiche", "crepe", "parfait", "grits", "muffin", "scramble", "poached", "chia", "blini", "syrniki")):
             return (0, low)
-        if any(w in low for w in ("hummus", "dip", "guacamole", "nut", "almond", "walnut", "seed", "apple", "pear", "berry", "edamame", "cheese", "snack", "salsa")):
+        if any(w in low for w in ("turkey", "hummus", "dip", "guacamole", "nut", "almond", "walnut", "seed", "apple", "pear", "berry", "edamame", "cheese", "snack", "salsa")):
             return (1, low)
         if any(w in low for w in ("salad", "soup", "sandwich", "wrap", "burrito", "bowl", "lentil", "chickpea", "quinoa")):
             return (2, low)
@@ -615,7 +740,7 @@ def fetch_wikibooks_real(needed_counts: dict[str, int]) -> list[dict]:
                 if not revs:
                     continue
                 wt = revs[0].get("slots", {}).get("main", {}).get("*", "")
-                parsed = parse_wikibooks_wikitext(p["title"], wt)
+                parsed = parse_wikibooks_wikitext(p["title"], wt, p["title"] in bf_cat_titles)
                 if not parsed or parsed["id"] in seen_ids:
                     continue
                 cat = parsed["mealCategory"]
@@ -642,7 +767,7 @@ def main():
     print("TheMealDB real counts:", len(tmdb), tmdb_counts)
 
     needed = {
-        "breakfast": max(0, 225 - tmdb_counts["breakfast"]),
+        "breakfast": max(0, 240 - tmdb_counts["breakfast"]),
         "lunch": max(0, 220 - tmdb_counts["lunch"]),
         "dinner": max(0, 220 - tmdb_counts["dinner"]),
         "snack": max(0, 120 - tmdb_counts["snack"]),
@@ -665,12 +790,18 @@ def main():
 
     # Fetch extra verified Wikimedia Commons food photos if needed so zero recipes repeat or fall back
     used_imgs = {r["imageUrl"] for r in all_real if r["imageUrl"]}
-    extra_pool = list(dict.fromkeys(json.loads(IMAGE_MAP_PATH.read_text(encoding="utf-8")).values()))
-    avail_pool = [u for u in extra_pool if u not in used_imgs]
+    avail_pool = []
     need_imgs = sum(1 for r in all_real if not r["imageUrl"])
     if len(avail_pool) < need_imgs:
-        print(f"Fetching extra Wikimedia food images (need {need_imgs}, have {len(avail_pool)})...")
-        for q in ["breakfast food", "egg dish", "healthy snack", "vegetable dish", "dinner plate", "soup bowl", "salad plate", "porridge"]:
+        print(f"Fetching verified Wikimedia food images (need {need_imgs})...")
+        for q in [
+            "omelette", "oatmeal", "yogurt parfait", "smoothie", "avocado toast",
+            "pancakes berries", "breakfast food", "egg dish", "salad bowl",
+            "lentil soup", "vegetable soup", "sandwich", "quinoa bowl",
+            "healthy snack", "hummus vegetables", "nuts seeds", "cottage cheese",
+            "grilled salmon", "roasted chicken", "vegetable stir fry", "pasta dish",
+            "dinner plate", "porridge",
+        ]:
             if len(avail_pool) >= need_imgs + 40:
                 break
             q_enc = urllib.parse.quote(q)
@@ -680,7 +811,7 @@ def main():
                 for p in d.get("query", {}).get("pages", {}).values():
                     info = (p.get("imageinfo") or [{}])[0]
                     t = p.get("title", "").lower()
-                    if any(b in t for b in ("logo", "icon", "map", "diagram", "svg", "chart", "cake", "cookie")):
+                    if any(b in t for b in ("logo", "icon", "map", "diagram", "svg", "chart", "cake", "cookie", "donut")):
                         continue
                     if info.get("mime") in ("image/jpeg", "image/png", "image/webp") and info.get("width", 0) >= 400:
                         iu = info.get("thumburl") or info.get("url")
@@ -688,7 +819,7 @@ def main():
                             avail_pool.append(iu)
             except Exception:
                 pass
-            time.sleep(0.6)
+            time.sleep(0.5)
 
     pool_idx = 0
     for r in all_real:

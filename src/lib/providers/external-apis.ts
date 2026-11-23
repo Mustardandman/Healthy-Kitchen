@@ -1291,13 +1291,12 @@ export async function getTheMealDbRecipeDetail(slug: string): Promise<RecipeDeta
 
     const ingredients = parseTheMealDbIngredients(m);
     const hasExternalSource = Boolean(m.strSource && m.strSource.startsWith("http"));
-    const instructions: RecipeStep[] = hasExternalSource
-      ? []
-      : (m.strInstructions || "")
-          .split(/\r?\n+/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line, i) => ({ step: i + 1, instruction: line }));
+    const instructions: RecipeStep[] = (m.strInstructions || "")
+      .split(/\r?\n+|(?<=\.)\s+(?=[A-Z])/)
+      .map((line) => line.replace(/^step\s*\d+[:.)-]?\s*/i, "").trim())
+      .filter((line) => line.length >= 6)
+      .slice(0, 14)
+      .map((line, i) => ({ step: i + 1, instruction: line }));
 
     const safety = evaluatePregnancySafety({
       ingredients: ingredients.map((i) => ({
@@ -1358,7 +1357,7 @@ export async function getTheMealDbRecipeDetail(slug: string): Promise<RecipeDeta
       created_at: new Date().toISOString(),
       ingredients,
       instructions,
-      instructions_license_mode: hasExternalSource ? "link_only" : "licensed_display",
+      instructions_license_mode: instructions.length > 0 ? "licensed_display" : "link_only",
       health_assessment: {
         nutritiousHighlights: [
           "Prepared with whole-food culinary ingredients listed above.",

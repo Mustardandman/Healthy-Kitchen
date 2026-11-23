@@ -88,32 +88,37 @@ export function evaluatePregnancySafety(params: {
     }
   }
 
+  const hasWord = (kw: string) => {
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    return new RegExp(`\\b${escaped}\\b`, "i").test(combinedText);
+  };
+
   for (const kw of HIGH_MERCURY_KEYWORDS) {
-    if (combinedText.includes(kw)) {
+    if (hasWord(kw)) {
       flags.push(`Contains high-mercury fish (${kw}); FDA/EPA recommends avoiding during pregnancy.`);
     }
   }
 
   for (const kw of UNPASTEURIZED_KEYWORDS) {
-    if (combinedText.includes(kw) && !combinedText.includes("pasteurized")) {
+    if (hasWord(kw) && !hasWord("pasteurized")) {
       flags.push(`May contain unpasteurized dairy (${kw}); verify "made with pasteurized milk" on the label.`);
     }
   }
 
   for (const kw of RAW_PREPARATION_KEYWORDS) {
-    if (combinedText.includes(kw)) {
+    if (hasWord(kw)) {
       flags.push(`Preparation mentions "${kw}"; cook eggs, meats, seafood, and sprouts thoroughly during pregnancy.`);
     }
   }
 
   for (const kw of SMOKED_SEAFOOD_KEYWORDS) {
-    if (combinedText.includes(kw)) {
+    if (hasWord(kw)) {
       flags.push(`Refrigerated smoked seafood (${kw}) must be heated to 165°F (74°C) in a cooked dish or substituted with cooked salmon.`);
     }
   }
 
   for (const kw of DELI_MEAT_KEYWORDS) {
-    if (combinedText.includes(kw)) {
+    if (hasWord(kw)) {
       flags.push(`Cold deli or cured meat (${kw}) should be heated until steaming hot (165°F / 74°C) or replaced with freshly cooked poultry.`);
     }
   }

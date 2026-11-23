@@ -947,12 +947,22 @@ export const USDA_INGREDIENTS: Record<string, UsdaIngredientRef> = {
   },
   cinnamon_spices: {
     id: "cinnamon_spices",
-    canonicalName: "ground cinnamon, herbs & spices",
+    canonicalName: "ground cinnamon & warm spices",
     synonyms: ["cinnamon", "cumin", "oregano", "paprika", "turmeric", "garlic powder", "italian seasoning", "ginger"],
     category: "spice",
     usdaFdcId: 171320,
     per100g: { calories: 247, carbs_g: 80.6, protein_g: 4.0, fat_g: 1.2, fiber_g: 53.1, sugar_g: 2.2, added_sugar_g: 0, sodium_mg: 10, calcium_mg: 1002, iron_mg: 8.3, folate_mcg: 6 },
-    unitGrams: { tsp: 2.6, tbsp: 7.8, g: 1 },
+    unitGrams: { tsp: 2.6, tbsp: 7.8, pinch: 0.3, dash: 0.5, g: 1 },
+    tags: [],
+  },
+  seasoning_basic: {
+    id: "seasoning_basic",
+    canonicalName: "salt, black pepper, water, or vinegar",
+    synonyms: ["salt", "sea salt", "black pepper", "peppercorn", "water", "apple cider vinegar", "vinegar", "baking powder", "baking soda"],
+    category: "spice",
+    usdaFdcId: 173468,
+    per100g: { calories: 0, carbs_g: 0, protein_g: 0, fat_g: 0, fiber_g: 0, sugar_g: 0, added_sugar_g: 0, sodium_mg: 0, calcium_mg: 0, iron_mg: 0, folate_mcg: 0 },
+    unitGrams: { tsp: 5, tbsp: 15, cup: 240, ml: 1, pinch: 0.3, dash: 0.5, g: 1, piece: 5 },
     tags: [],
   },
   vanilla_extract: {
@@ -1035,9 +1045,25 @@ export function computeGramWeight(
   const ref = USDA_INGREDIENTS[ingredientId];
   if (!ref) return quantity * 50;
   const normalizedUnit = unit.toLowerCase().replace(/s$/, "");
+  const genericFallbacks: Record<string, number> = {
+    g: 1,
+    ml: 1,
+    kg: 1000,
+    l: 1000,
+    oz: 28.35,
+    lb: 453.6,
+    tbsp: 15,
+    tsp: 5,
+    pinch: 0.3,
+    dash: 0.5,
+    sprig: 2,
+    leaf: 1,
+    handful: 30,
+  };
   const factor =
     ref.unitGrams[normalizedUnit] ??
     ref.unitGrams[unit.toLowerCase()] ??
+    genericFallbacks[normalizedUnit] ??
     ref.unitGrams.piece ??
     ref.unitGrams.cup ??
     100;

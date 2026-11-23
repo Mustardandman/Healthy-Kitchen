@@ -1,5 +1,5 @@
 import realRecipesData from "@/data/real-recipes.json";
-import { USDA_INGREDIENTS } from "@/data/usda-ingredients";
+import { computeGramWeight, USDA_INGREDIENTS } from "@/data/usda-ingredients";
 import { closeDb, getDb } from "@/db/schema";
 import {
   calculateRecipeNutrition,
@@ -216,9 +216,7 @@ export function seedDatabase(reset = true): {
       bp.ingredients.forEach((ing, orderIdx) => {
         const ref = USDA_INGREDIENTS[ing.ingredientId];
         if (!ref) return;
-        const unitNorm = ing.unit.toLowerCase().replace(/s$/, "");
-        const gramFactor = ref.unitGrams[unitNorm] ?? ref.unitGrams[ing.unit.toLowerCase()] ?? 50;
-        const gramWeight = Math.round(ing.quantity * gramFactor * 10) / 10;
+        const gramWeight = computeGramWeight(ing.ingredientId, ing.quantity, ing.unit);
         const displayName = ing.displayName ?? ref.canonicalName;
 
         insertIng.run(

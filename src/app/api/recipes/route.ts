@@ -32,9 +32,9 @@ export async function GET(request: NextRequest) {
       subcategory,
       ingredients: ingredientsRaw
         ? ingredientsRaw
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
         : undefined,
       maxTime,
       minProtein,
@@ -43,9 +43,9 @@ export async function GET(request: NextRequest) {
       maxCalories,
       dietary: dietaryRaw
         ? dietaryRaw
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
         : undefined,
       safetyStatus: (searchParams.get("safetyStatus") as PregnancySafetyStatus | "") ?? undefined,
       classification: searchParams.get("classification") ?? undefined,
@@ -69,15 +69,15 @@ export async function GET(request: NextRequest) {
           : Promise.resolve([]),
         providers.spoonacularConfigured && effectiveQuery
           ? searchSpoonacularRecipes({
-              query: effectiveQuery,
-              category,
-              maxTime,
-              minProtein,
-              maxCarbs,
-              minFiber,
-              maxCalories,
-              number: 6,
-            })
+            query: effectiveQuery,
+            category,
+            maxTime,
+            minProtein,
+            maxCarbs,
+            minFiber,
+            maxCalories,
+            number: 6,
+          })
           : Promise.resolve([]),
         providers.themealdbEnabled && effectiveQuery
           ? searchTheMealDbRecipes({ query: effectiveQuery, category, limit: 4 })
